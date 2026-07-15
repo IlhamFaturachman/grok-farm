@@ -1,0 +1,22 @@
+[Unit]
+Description=Grok Farm public free-token status API
+After=network.target
+
+[Service]
+Type=simple
+User=farm
+WorkingDirectory=/opt/grok-farm
+# 0.0.0.0 so Docker api-gate can reach host:8002 via host.docker.internal
+Environment=PUBLIC_STATUS_HOST=0.0.0.0
+Environment=PUBLIC_STATUS_PORT=8002
+Environment=PUBLIC_BASE_URL=https://api.example.com
+Environment=PUBLIC_TOKEN_FILE=/opt/grok-farm/results/g2a_client_key.txt
+Environment=PUBLIC_TOKEN_NAME=public-free
+Environment=GROK2API_URL=http://127.0.0.1:8000
+# Loads remaining secrets (admin pass etc.) from .env via python-dotenv
+ExecStart=/opt/grok-farm/.venv/bin/python /opt/grok-farm/public_status.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>grok farm · free token</title>
+<meta name="description" content="Shared free Grok API token — remaining quota, base URL, models.">
+<meta name="color-scheme" content="light dark">
+<script>
+(function () {
+  try {
+    var s = localStorage.getItem("theme");
+    var dark = s ? s === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  } catch (e) {
+    document.documentElement.setAttribute("data-theme", "light");
+  }
+})();
+</script>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='2' width='28' height='28' rx='6' fill='%23c2f046' stroke='%23111' stroke-width='3'/%3E%3Cpath d='M10 16h12M16 10v12' fill='none' stroke='%23111' stroke-width='3.2' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --paper: oklch(0.935 0.035 270);
+  --card: oklch(0.995 0.002 270);
+  --ink: oklch(0.165 0.020 275);
+  --muted: oklch(0.42 0.020 275);
+  --line: var(--ink);
+  --sk: oklch(0.88 0.020 270);
+  --edge: var(--ink);
+  --shadow: var(--ink);
+  --lime: oklch(0.855 0.190 132);
+  --amber: oklch(0.840 0.170 80);
+  --red: oklch(0.660 0.220 27);
+  --accent-ink: oklch(0.180 0.030 285);
+  --bd: 3px solid var(--edge);
+  --bd2: 2px solid var(--edge);
+  --sh: 6px 6px 0 0 var(--shadow);
+  --sh-sm: 3px 3px 0 0 var(--shadow);
+  --r: 16px;
+  --r-sm: 10px;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --z-toast: 600;
+  --maxw: 760px;
+}
+:root[data-theme="dark"] {
+  --paper: oklch(0.215 0.026 285);
+  --card: oklch(0.265 0.030 285);
+  --ink: oklch(0.905 0.014 285);
+  --muted: oklch(0.660 0.018 285);
+  --edge: oklch(0.560 0.022 285);
+  --shadow: oklch(0.135 0.020 285);
+  --sk: oklch(0.320 0.026 285);
+  --lime: oklch(0.820 0.165 134);
+  --amber: oklch(0.800 0.150 82);
+  --red: oklch(0.650 0.190 28);
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; min-height: 100dvh; background: var(--paper); color: var(--ink);
+  font-family: "Space Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px; line-height: 1.5; -webkit-font-smoothing: antialiased;
+}
+.wrap { width: min(100% - 2rem, var(--maxw)); margin-inline: auto; }
+header.top {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding-block: clamp(1.2rem, 4vw, 2rem);
+}
+.brand {
+  display: inline-flex; align-items: baseline; gap: 0.4ch;
+  font-weight: 700; font-size: 1.25rem; letter-spacing: -0.02em;
+  text-decoration: none; color: inherit;
+}
+.brand .face { color: var(--muted); font-weight: 600; font-size: 0.86em; }
+.controls { display: inline-flex; align-items: center; gap: 0.6rem; }
+.iconbtn {
+  display: inline-grid; place-items: center; width: 38px; height: 38px;
+  color: var(--ink); background: var(--card);
+  border: var(--bd2); border-radius: 999px; box-shadow: var(--sh-sm);
+  cursor: pointer; padding: 0;
+  transition: transform 0.12s var(--ease), box-shadow 0.12s var(--ease);
+}
+.iconbtn:hover { transform: translate(-1px, -1px); box-shadow: 5px 5px 0 0 var(--shadow); }
+.iconbtn:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 0 var(--shadow); }
+.iconbtn:focus-visible { outline: 3px solid var(--edge); outline-offset: 3px; }
+.iconbtn svg { width: 18px; height: 18px; }
+.iconbtn .i-sun { display: none; }
+:root[data-theme="dark"] .iconbtn .i-sun { display: block; }
+:root[data-theme="dark"] .iconbtn .i-moon { display: none; }
+.live {
+  display: inline-flex; align-items: center; gap: 0.55ch;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+  padding: 0.4rem 0.7rem;
+  background: var(--lime); color: var(--accent-ink);
+  border: 2px solid var(--accent-ink); border-radius: 999px;
+  box-shadow: var(--sh-sm);
+}
+.blip { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-ink); animation: blink 1.6s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0.25; } }
+#deals { display: grid; gap: 1.5rem; padding-bottom: 1.5rem; }
+.card {
+  background: var(--card); border: var(--bd); border-radius: var(--r); box-shadow: var(--sh);
+  padding: clamp(1.1rem, 3.5vw, 1.7rem); display: grid; gap: clamp(1.1rem, 3.5vw, 1.6rem);
+}
+.card__top { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 0.7rem; }
+.label { margin: 0 auto 0 0; font-size: clamp(1.25rem, 1rem + 1.4vw, 1.6rem); font-weight: 700; letter-spacing: -0.02em; }
+.badge {
+  display: inline-flex; align-items: center; gap: 0.5ch;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 0.34rem 0.6rem; background: var(--card); color: var(--ink);
+  border: var(--bd2); border-radius: 999px;
+}
+.badge .sq { width: 8px; height: 8px; background: var(--ink); }
+.badge--active { background: var(--lime); color: var(--accent-ink); border-color: var(--accent-ink); }
+.badge--active .sq { background: var(--accent-ink); }
+.badge--revoked { background: var(--red); color: oklch(0.99 0 0); border-color: var(--accent-ink); }
+.badge--revoked .sq { background: oklch(0.99 0 0); }
+.chip {
+  display: inline-flex; align-items: center; gap: 0.55ch;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.82rem; font-weight: 600; color: var(--ink);
+  background: var(--card); border: var(--bd2); border-radius: 999px;
+  padding: 0.32rem 0.5rem 0.32rem 0.75rem; cursor: pointer;
+  box-shadow: var(--sh-sm);
+  transition: transform 0.12s var(--ease), box-shadow 0.12s var(--ease);
+}
+.chip svg { width: 15px; height: 15px; flex: none; }
+.chip:hover { transform: translate(-1px, -1px); box-shadow: 5px 5px 0 0 var(--shadow); }
+.chip:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 0 var(--shadow); }
+.chip:focus-visible { outline: 3px solid var(--edge); outline-offset: 3px; }
+.big { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.2rem 0.7ch; }
+.big__n {
+  font-size: clamp(3.2rem, 1.6rem + 9vw, 5.2rem);
+  line-height: 0.88; font-weight: 700; letter-spacing: -0.045em;
+  font-variant-numeric: tabular-nums;
+}
+.big__u { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.92rem; font-weight: 600; color: var(--muted); }
+.meter__row { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 0.55rem; }
+.pct { font-size: 1.7rem; font-weight: 700; letter-spacing: -0.02em; color: var(--accent, var(--ink)); font-variant-numeric: tabular-nums; }
+.pct small { font-size: 0.5em; color: var(--muted); font-weight: 600; }
+.cap { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.track { height: 28px; background: var(--card); border: var(--bd); border-radius: 999px; overflow: hidden; padding: 0; }
+.fill {
+  height: 100%; width: 0%; background: var(--accent, var(--lime));
+  border-right: 3px solid var(--accent-ink); transition: width 1s var(--ease);
+}
+.fill[data-full="1"] { border-right: 0; }
+.legend {
+  display: flex; justify-content: space-between; margin-top: 0.55rem;
+  font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.74rem; font-weight: 600; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 3px;
+  background: var(--edge); border: var(--bd); border-radius: var(--r-sm); overflow: hidden;
+}
+@media (min-width: 620px) { .grid { grid-template-columns: repeat(4, 1fr); } }
+.cell { background: var(--card); padding: 0.85rem 0.95rem; display: grid; gap: 0.25rem; align-content: start; }
+.cell .k {
+  font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.66rem; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+}
+.cell .v { font-size: 0.98rem; font-weight: 700; font-variant-numeric: tabular-nums; word-break: break-word; }
+.cell .v.copyv {
+  display: inline-flex; align-items: center; gap: 0.5ch; cursor: pointer;
+  background: none; border: 0; padding: 0; font: inherit; font-weight: 700; color: var(--ink); text-align: left;
+  text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; text-decoration-color: var(--lime);
+}
+.cell .v.copyv svg { width: 14px; height: 14px; flex: none; }
+.cell .v.copyv:hover { text-decoration-color: var(--ink); }
+.cell .v.copyv:focus-visible { outline: 3px solid var(--edge); outline-offset: 3px; border-radius: 3px; }
+#models { padding-bottom: 1.5rem; }
+.models-card { gap: 1.1rem; }
+.mhead { display: flex; align-items: baseline; justify-content: space-between; gap: 0.7rem; }
+.mhead h2 { margin: 0; font-size: 1.1rem; font-weight: 700; letter-spacing: -0.01em; }
+.mhead .mcount {
+  font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.72rem; font-weight: 700;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
+}
+.mlist { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.6rem; }
+.mnote { margin: 0; color: var(--muted); font-weight: 500; font-size: 0.92rem; }
+.mchip.sk { width: 9ch; height: 2.1rem; border: var(--bd2); box-shadow: var(--sh-sm); }
+footer.foot {
+  padding-block: 1.4rem 2.4rem;
+  display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; justify-content: space-between;
+  font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.74rem; font-weight: 600; color: var(--muted);
+}
+.foot .upd { display: inline-flex; align-items: center; gap: 0.55ch; }
+.foot .sq { width: 9px; height: 9px; background: var(--lime); border: 1.5px solid var(--accent-ink); }
+.notice {
+  background: var(--card); border: var(--bd); border-radius: var(--r); box-shadow: var(--sh);
+  padding: clamp(1.6rem, 5vw, 2.6rem); text-align: center;
+}
+.notice h3 { margin: 0 0 0.4rem; font-size: 1.3rem; font-weight: 700; }
+.notice p { margin: 0 auto 1.2rem; max-width: 40ch; color: var(--muted); font-weight: 500; }
+.btn {
+  display: inline-flex; align-items: center; gap: 0.5ch; margin: 0 auto;
+  font: inherit; font-weight: 700; font-size: 0.92rem; color: var(--accent-ink); cursor: pointer;
+  background: var(--lime); border: 3px solid var(--accent-ink); border-radius: var(--r-sm);
+  padding: 0.6rem 1.1rem; box-shadow: var(--sh-sm);
+  transition: transform 0.12s var(--ease), box-shadow 0.12s var(--ease);
+}
+.btn:hover { transform: translate(-1px, -1px); box-shadow: 5px 5px 0 0 var(--shadow); }
+.btn:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 0 var(--shadow); }
+.btn:focus-visible { outline: 3px solid var(--edge); outline-offset: 3px; }
+.sk { background: var(--sk); border-radius: var(--r-sm); color: transparent !important; animation: pulse 1.2s var(--ease) infinite alternate; }
+@keyframes pulse { to { opacity: 0.5; } }
+.card, .notice { animation: pop 0.4s var(--ease) both; }
+@keyframes pop { from { opacity: 0; transform: translateY(10px); } }
+#toast {
+  position: fixed; left: 50%; bottom: 1.4rem; transform: translate(-50%, 1.4rem);
+  z-index: var(--z-toast);
+  background: var(--lime); color: var(--accent-ink); font-weight: 700; font-size: 0.88rem;
+  padding: 0.6rem 1rem; border: 3px solid var(--accent-ink); border-radius: 999px; box-shadow: var(--sh-sm);
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.2s var(--ease), transform 0.28s var(--ease);
+}
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="/">grok farm<span class="face">(◕‿◕)</span></a>
+    <div class="controls">
+      <button id="theme-toggle" class="iconbtn" type="button" aria-label="Toggle dark mode" aria-pressed="false">
+        <svg class="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        <svg class="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5"></circle><path d="M12 1.5v2M12 20.5v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1.5 12h2M20.5 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"></path></svg>
+      </button>
+      <span class="live"><span class="blip"></span> live</span>
+    </div>
+  </header>
+
+  <main>
+    <section id="deals" aria-live="polite" aria-busy="true"></section>
+    <section id="models" aria-live="polite" aria-busy="true"></section>
+    <footer class="foot">
+      <span>free token · grok only</span>
+      <span class="upd"><span class="sq"></span> updated <span id="updated">—</span></span>
+    </footer>
+  </main>
+</div>
+
+<div id="toast" role="status" aria-live="polite">Copied!</div>
+<div class="sr-only" id="live" aria-live="polite"></div>
+
+<script>
+(() => {
+  "use strict";
+  const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const API = "/api/public/status";
+  const $ = (s, r = document) => r.querySelector(s);
+  const deals = $("#deals");
+  const modelsEl = $("#models");
+  const live = $("#live");
+
+  const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 2 });
+  const grouped = new Intl.NumberFormat("en-US");
+  const fmtPct = (n) => (Math.round(n * 10) / 10).toString();
+
+  function relTime(ts) {
+    if (!ts) return "—";
+    const t = typeof ts === "number" ? (ts < 1e12 ? ts * 1000 : ts) : Date.parse(ts);
+    if (Number.isNaN(t)) return "—";
+    const s = Math.max(0, (Date.now() - t) / 1000);
+    if (s < 60) return "just now";
+    const m = s / 60; if (m < 60) { const v = Math.floor(m); return v + (v === 1 ? " min ago" : " mins ago"); }
+    const h = m / 60; if (h < 24) { const v = Math.floor(h); return v + (v === 1 ? " hr ago" : " hrs ago"); }
+    const d = h / 24; if (d < 30) { const v = Math.floor(d); return v + (v === 1 ? " day ago" : " days ago"); }
+    return new Date(t).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" });
+  }
+  function dateShort(ts) {
+    if (!ts) return "—";
+    const t = typeof ts === "number" ? (ts < 1e12 ? ts * 1000 : ts) : Date.parse(ts);
+    if (Number.isNaN(t)) return "—";
+    return new Date(t).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" });
+  }
+  function accentFor(pct) {
+    if (pct > 40) return "var(--lime)";
+    if (pct > 15) return "var(--amber)";
+    return "var(--red)";
+  }
+  function countUp(el, from, to) {
+    if (REDUCED || from === to) { el.firstChild.nodeValue = compact.format(to); return; }
+    const dur = 800, t0 = performance.now();
+    const ease = (x) => 1 - Math.pow(1 - x, 4);
+    (function step(now) {
+      const p = Math.min(1, (now - t0) / dur);
+      el.firstChild.nodeValue = compact.format(Math.round(from + (to - from) * ease(p)));
+      if (p < 1) requestAnimationFrame(step);
+      else el.firstChild.nodeValue = compact.format(to);
+    })(t0);
+  }
+
+  const COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+  let toastTimer;
+  function toast(msg) {
+    const el = $("#toast"); el.textContent = msg; el.classList.add("show");
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove("show"), 1500);
+  }
+  async function copy(text, msg) {
+    try { await navigator.clipboard.writeText(text); toast(msg || "Copied!"); }
+    catch {
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); toast(msg || "Copied!"); } catch {}
+      ta.remove();
+    }
+  }
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  let prevRemaining = null;
+
+  function skeleton() {
+    deals.innerHTML = "";
+    const el = document.createElement("article");
+    el.className = "card";
+    el.innerHTML = `
+      <div class="card__top"><span class="label sk">Loading…</span></div>
+      <div class="big"><span class="big__n sk" style="width:8ch;height:4rem">000</span></div>
+      <div class="meter"><div class="track"><div class="fill sk" style="width:55%;border:0"></div></div></div>`;
+    deals.appendChild(el);
+  }
+
+  function notice(title, msg, retry) {
+    deals.innerHTML = "";
+    const el = document.createElement("div");
+    el.className = "notice";
+    el.innerHTML = `<h3>${esc(title)}</h3><p>${esc(msg)}</p>`;
+    if (retry) {
+      const b = document.createElement("button");
+      b.className = "btn"; b.type = "button"; b.textContent = "Try again";
+      b.addEventListener("click", load); el.appendChild(b);
+    }
+    deals.appendChild(el);
+  }
+
+  function card(data) {
+    const unlimited = !!data.unlimited || !(Number(data.quota) > 0);
+    const quota = Number(data.quota) || 0;
+    const remaining = unlimited ? -1 : (Number(data.remaining) || 0);
+    const used = Number(data.used) || 0;
+    const pct = unlimited ? 100 : (quota > 0 ? (remaining / quota) * 100 : 0);
+    const accent = accentFor(pct);
+    const active = !!data.active && data.enabled !== false;
+    const key = data.api_key || "";
+    const masked = data.key_masked || (key ? key.slice(0, 10) + "…" + key.slice(-4) : "—");
+    const endpoint = data.endpoint || (location.origin + "/v1");
+    const label = data.title || data.name || "Free Token";
+
+    const el = document.createElement("article");
+    el.className = "card";
+    el.style.setProperty("--accent", accent);
+    el.innerHTML = `
+      <div class="card__top">
+        <h2 class="label">${esc(label)}</h2>
+        <button class="chip" type="button" data-key="${esc(key)}" title="Copy key">${esc(masked)} ${COPY}</button>
+        <span class="badge ${active ? "badge--active" : "badge--revoked"}"><span class="sq"></span>${active ? "active" : "offline"}</span>
+      </div>
+
+      <div class="big"><span class="big__n">0</span><span class="big__u">${unlimited ? "unlimited · free pool" : ("token left · " + grouped.format(remaining))}</span></div>
+
+      <div class="meter">
+        <div class="meter__row"><span class="pct">${unlimited ? "∞" : (fmtPct(pct) + "<small>%</small>")}</span><span class="cap">left</span></div>
+        <div class="track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}" aria-label="Token left">
+          <div class="fill" data-full="${pct >= 99.5 ? 1 : 0}"></div>
+        </div>
+        <div class="legend"><span>${compact.format(used)} used</span><span>${compact.format(quota)} total</span></div>
+      </div>
+
+      <div class="grid">
+        <div class="cell"><span class="k">total quota</span><span class="v">${unlimited ? "∞" : grouped.format(quota)}</span></div>
+        <div class="cell"><span class="k">created</span><span class="v">${dateShort(data.created_at)}</span></div>
+        <div class="cell"><span class="k">last used</span><span class="v">${relTime(data.last_used_at)}</span></div>
+        <div class="cell"><span class="k">base url</span><button class="v copyv" type="button" data-base="${esc(endpoint)}" title="Copy base URL">/v1 ${COPY}</button></div>
+      </div>`;
+
+    el.querySelector(".chip").addEventListener("click", (e) => {
+      const k = e.currentTarget.dataset.key;
+      if (k) copy(k, "Key copied!");
+    });
+    el.querySelector("[data-base]").addEventListener("click", (e) => {
+      copy(e.currentTarget.dataset.base || endpoint, "Base URL copied!");
+    });
+
+    requestAnimationFrame(() => {
+      const big = el.querySelector(".big__n");
+      if (unlimited) { big.textContent = "∞"; }
+      else {
+        const from = prevRemaining == null ? (REDUCED ? remaining : 0) : prevRemaining;
+        countUp(big, from, remaining);
+        prevRemaining = remaining;
+      }
+      requestAnimationFrame(() => {
+        el.querySelector(".fill").style.width = Math.max(2, Math.min(100, pct)) + "%";
+      });
+    });
+    return el;
+  }
+
+  function render(data) {
+    deals.innerHTML = "";
+    if (!data || !data.active) {
+      notice("No free token yet", "Shared token is not published right now. Check back later.", false);
+      modelsEl.innerHTML = "";
+      return;
+    }
+    deals.appendChild(card(data));
+    if (data.unlimited || !(Number(data.quota) > 0)) live.textContent = `unlimited free pool · ${grouped.format(Number(data.used) || 0)} used`;
+    else live.textContent = `${grouped.format(Number(data.remaining) || 0)} token left · ${grouped.format(Number(data.quota) || 0)} total`;
+
+    const ids = Array.isArray(data.models) ? data.models.filter(Boolean) : [];
+    modelsEl.innerHTML = "";
+    const m = document.createElement("article");
+    m.className = "card models-card";
+    if (!ids.length) {
+      m.innerHTML = `<div class="mhead"><h2>Models</h2></div><p class="mnote">No models available right now.</p>`;
+    } else {
+      const items = ids.map((id) =>
+        `<li><button class="chip" type="button" data-model="${esc(id)}" title="Copy model id">${esc(id)} ${COPY}</button></li>`
+      ).join("");
+      m.innerHTML = `<div class="mhead"><h2>Models</h2><span class="mcount">${ids.length} usable</span></div><ul class="mlist">${items}</ul>`;
+      m.querySelectorAll("[data-model]").forEach((b) =>
+        b.addEventListener("click", (e) => copy(e.currentTarget.dataset.model, "Model copied!"))
+      );
+    }
+    modelsEl.appendChild(m);
+  }
+
+  let first = true;
+  async function load() {
+    if (first) skeleton();
+    deals.setAttribute("aria-busy", "true");
+    modelsEl.setAttribute("aria-busy", "true");
+    try {
+      const r = await fetch(API + "?_=" + Date.now(), { headers: { accept: "application/json" }, cache: "no-store" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      render(data);
+      $("#updated").textContent = "just now";
+    } catch {
+      if (first) notice("Couldn't load data", "Unable to fetch remaining quota right now. Check your connection and try again.", true);
+      else $("#updated").textContent = "failed";
+    } finally {
+      deals.setAttribute("aria-busy", "false");
+      modelsEl.setAttribute("aria-busy", "false");
+      first = false;
+    }
+  }
+
+  // theme
+  const themeMedia = matchMedia("(prefers-color-scheme: dark)");
+  const themeBtn = $("#theme-toggle");
+  const storedTheme = () => { try { return localStorage.getItem("theme"); } catch (e) { return null; } };
+  function setTheme(t) {
+    document.documentElement.setAttribute("data-theme", t);
+    if (themeBtn) themeBtn.setAttribute("aria-pressed", String(t === "dark"));
+  }
+  setTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light");
+  if (themeBtn) {
+    themeBtn.addEventListener("click", () => {
+      const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+      setTheme(next);
+      try { localStorage.setItem("theme", next); } catch (e) {}
+    });
+  }
+  themeMedia.addEventListener("change", (e) => { if (!storedTheme()) setTheme(e.matches ? "dark" : "light"); });
+
+  load();
+  // light poll like abdi bansos (quota live)
+  setInterval(load, 15000);
+})();
+</script>
+</body>
+</html>

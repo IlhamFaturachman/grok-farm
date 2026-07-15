@@ -1,0 +1,120 @@
+# Combined stack: chenyme/grok2api (+ optional notes for host-side grok-farm).
+#
+# grok-farm needs a real browser + IMAP, so it runs on the HOST (or a VPS),
+# not inside this compose file by default. After farming:
+#   python g2a_export.py results/batch_xxx/ --import
+# or set GROK2API_AUTO_IMPORT=true in .env and run farm.py.
+#
+# Quick start:
+#   cp docker/grok2api/config.example.yaml docker/grok2api/config.yaml
+#   # edit secrets + bootstrapAdmin password
+#   docker compose up -d
+#   open http://127.0.0.1:8000
+#
+# Then point farm at the API:
+#   GROK2API_URL=http://127.0.0.1:8000
+#   GROK2API_ADMIN_USER=admin
+#   GROK2API_ADMIN_PASS=<same as bootstrapAdmin>
+#   GROK2API_AUTO_IMPORT=true
+
+name: grok-farm-stack
+
+services:
+  grok2api:
+    container_name: grok2api
+    image: "${GROK2API_IMAGE:-ghcr.io/chenyme/grok2api:latest}"
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      TZ: "${TZ:-UTC}"
+    volumes:
+      - "${GROK2API_CONFIG:-./docker/grok2api/config.yaml}:/run/grok2api/config.yaml:ro"
+      - grok2api-data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8000/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+
+  # Public gate: landing page + /v1/* API (+ /healthz).
+  # Cloudflare tunnel points here instead of grok2api directly.
+  api-gate:
+    container_name: api-gate
+    image: nginx:alpine
+    ports:
+      - "127.0.0.1:8080:80"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./public:/usr/share/nginx/html:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      grok2api:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  # Optional: Cloudflare WARP egress for cleaner exit IP (uncomment to enable).
+  # After start, add socks5://warp:1080 in grok2api admin → Settings → egress proxy.
+  # warp:
+  #   container_name: warp
+  #   image: caomingjun/warp:latest
+  #   restart: unless-stopped
+  #   ports:
+  #     - "127.0.0.1:1080:1080"
+  #   environment:
+  #     - WARP_SLEEP=2
+  #   cap_add:
+  #     - NET_ADMIN
+
+  # Optional one-shot importer: drops g2a_import.json from a mounted batch folder.
+  # Usage:
+  #   docker compose run --rm g2a-import
+  # Requires docker/grok2api/import.env or env vars below.
+  g2a-import:
+    profiles: ["tools"]
+    container_name: grok-farm-g2a-import
+    image: python:3.12-slim
+    working_dir: /work
+    volumes:
+      - ./:/work:ro
+      - ./results:/work/results:ro
+    environment:
+      GROK2API_URL: "${GROK2API_URL:-http://grok2api:8000}"
+      GROK2API_ADMIN_USER: "${GROK2API_ADMIN_USER:-admin}"
+      GROK2API_ADMIN_PASS: "${GROK2API_ADMIN_PASS:-}"
+      # Path inside container to accounts.json or batch dir
+      G2A_IMPORT_SOURCE: "${G2A_IMPORT_SOURCE:-/work/results}"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        pip install -q python-dotenv
+        if [ -z "$$GROK2API_ADMIN_PASS" ]; then
+          echo "ERROR: set GROK2API_ADMIN_PASS"
+          exit 1
+        fi
+        # Prefer newest batch_*/g2a_import.json or accounts.json
+        SRC="$$G2A_IMPORT_SOURCE"
+        if [ -d "$$SRC" ] && [ ! -f "$$SRC/accounts.json" ] && [ ! -f "$$SRC/g2a_import.json" ]; then
+          LATEST=$$(ls -1d $$SRC/batch_* 2>/dev/null | tail -1 || true)
+          if [ -n "$$LATEST" ]; then SRC="$$LATEST"; fi
+        fi
+        echo "Importing from $$SRC → $$GROK2API_URL"
+        python g2a_export.py "$$SRC" --import --url "$$GROK2API_URL" \
+          --user "$$GROK2API_ADMIN_USER" --password "$$GROK2API_ADMIN_PASS"
+    depends_on:
+      grok2api:
+        condition: service_started
+    restart: "no"
+
+volumes:
+  grok2api-data:

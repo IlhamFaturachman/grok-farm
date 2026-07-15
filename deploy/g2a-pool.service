@@ -1,0 +1,18 @@
+[Unit]
+Description=Grok farm → grok2api continuous account import pooler
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=farm
+Group=farm
+WorkingDirectory=/opt/grok-farm
+Environment=FARM_DIR=/opt/grok-farm
+# Interval / state loaded from .env via python-dotenv
+ExecStart=/opt/grok-farm/.venv/bin/python /opt/grok-farm/g2a_pool.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

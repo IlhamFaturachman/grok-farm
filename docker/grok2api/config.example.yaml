@@ -1,0 +1,68 @@
+# grok2api config for the combined grok-farm + grok2api stack.
+# Copy to docker/grok2api/config.yaml and set secrets before `docker compose up`.
+#
+# Generate secrets:
+#   openssl rand -hex 32          # jwtSecret
+#   openssl rand -base64 32       # credentialEncryptionKey
+#
+# Config tags:
+# - [required] must change before first start
+# - [optional] change when deployment changes
+# - [default]  recommended as-is
+
+server:
+  # Docker image overrides listen to 0.0.0.0:8000 via entrypoint.
+  listen: "127.0.0.1:8000"
+  # 128 MiB — agent payloads (ZCode tools/history) exceed the old 32 MiB default.
+  maxBodyBytes: 134217728
+  readTimeout: 15m
+  requestTimeout: 2h
+  swaggerEnabled: false
+
+secrets:
+  # [required] ≥ 32 characters
+  jwtSecret: "replace-with-at-least-32-characters"
+  # [required] Base64 32-byte key — keep permanently after first account write
+  credentialEncryptionKey: "replace-with-base64-key"
+
+bootstrapAdmin:
+  # Used only when the DB has no admin yet. Remove after first login.
+  username: "admin"
+  # [required] strong password
+  password: "replace-with-a-strong-password"
+
+frontend:
+  # Host-facing URL (change if you publish on another host/port)
+  # When behind a Cloudflare Tunnel / reverse proxy, set to the public HTTPS URL.
+  publicApiBaseURL: "https://api.example.com"
+  staticPath: "./frontend/dist"
+
+database:
+  driver: sqlite # sqlite | postgres
+  sqlite:
+    path: "./data/backend.db"
+  postgres:
+    dsn: "postgres://user:password@127.0.0.1:5432/grok2api?sslmode=disable"
+    maxOpenConns: 50
+    maxIdleConns: 10
+
+runtimeStore:
+  driver: memory # memory | redis
+  redis:
+    address: "127.0.0.1:6379"
+    username: ""
+    password: ""
+    database: 0
+    keyPrefix: "grok2api:"
+    tls: false
+
+auth:
+  accessTokenTTL: 168h
+  refreshTokenTTL: 2160h
+  # true when serving over HTTPS (e.g. behind Cloudflare Tunnel)
+  secureCookies: true
+
+media:
+  driver: local
+  local:
+    path: "./data/media"

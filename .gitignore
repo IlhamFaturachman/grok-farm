@@ -1,0 +1,42 @@
+# Secrets & local env
+.env
+.env.local
+.env.*.local
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime / farm output
+results/
+screenshots/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+g2a_import.json
+proxies.txt
+
+# grok2api real secrets (keep example only)
+docker/grok2api/config.yaml
+docker/grok2api/*.bak*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.zcode/
+
+# Temp / local diagnostics
+_probe_*.py
+_diag_*.py
+_synthlabs*
+*.har

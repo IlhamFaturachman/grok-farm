@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<meta name="theme-color" content="#FFF46A"/>
+<title>Traffic Intel</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --bg:#FFF8E7;--ink:#111;--muted:#3d3d3d;--card:#fff;
+  --yellow:#FFF46A;--pink:#FF8FAB;--blue:#7DD3FC;--green:#86EFAC;
+  --orange:#FDBA74;--red:#FB7185;--violet:#C4B5FD;
+  --border:3px solid #111;--shadow:4px 4px 0 #111;--shadow-sm:3px 3px 0 #111;
+  --radius:14px;--tap:44px;
+  /* Layout frame: readable max width + real side gutters on every viewport */
+  --page-max:1080px;
+  --gutter:clamp(16px, 4vw, 32px);
+  --shadow-room:4px; /* hard neo shadow must not force flush edges */
+  --font:'Space Grotesk',system-ui,sans-serif;
+  --display:'Archivo Black','Space Grotesk',sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+  --safe-b:env(safe-area-inset-bottom,0px);
+  --safe-t:env(safe-area-inset-top,0px);
+  --safe-l:env(safe-area-inset-left,0px);
+  --safe-r:env(safe-area-inset-right,0px);
+  --ease-out:cubic-bezier(0.23, 1, 0.32, 1);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;min-height:100%}
+body{
+  font-family:var(--font);color:var(--ink);line-height:1.45;
+  background:
+    radial-gradient(circle at 8% 12%, #FFE08A 0 18%, transparent 19%),
+    radial-gradient(circle at 92% 8%, #FFB4C8 0 14%, transparent 15%),
+    radial-gradient(circle at 80% 88%, #A5F3FC 0 16%, transparent 17%),
+    var(--bg);
+}
+button,input,select{font:inherit;color:inherit}button{cursor:pointer}
+.hidden{display:none!important}
+
+/*
+  One content frame for header + main.
+  Outer page has gutters; inner shell is the aligned column.
+*/
+.page{
+  width:100%;
+  padding-left:max(var(--gutter), var(--safe-l));
+  padding-right:max(var(--gutter), var(--safe-r));
+}
+.shell{
+  width:100%;
+  max-width:var(--page-max);
+  margin-inline:auto;
+  min-width:0;
+}
+/* Content column reserves room for hard right/bottom shadows so cards
+   never look wider than the header text line */
+.shell-content{
+  padding-right:var(--shadow-room);
+  padding-bottom:var(--shadow-room);
+}
+
+.login{
+  min-height:100dvh;display:grid;place-items:center;
+  padding:
+    max(20px,var(--safe-t))
+    max(var(--gutter),var(--safe-l))
+    max(24px,var(--safe-b))
+    max(var(--gutter),var(--safe-r));
+}
+.login-card{
+  width:min(420px,100%);background:var(--yellow);border:var(--border);
+  border-radius:var(--radius);box-shadow:8px 8px 0 #111;padding:24px 20px 20px;
+}
+.brand-kicker{display:inline-block;background:var(--ink);color:var(--yellow);font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;padding:4px 8px;border-radius:999px;margin-bottom:10px}
+.login-card h1{font-family:var(--display);font-size:clamp(28px,7vw,36px);margin:0 0 6px;letter-spacing:-.02em;line-height:1}
+.login-card .lede{margin:0 0 18px;font-weight:600;color:var(--muted)}
+
+.app-header{
+  position:sticky;top:0;z-index:40;background:var(--yellow);
+  border-bottom:var(--border);
+  padding-top:max(12px,var(--safe-t));
+  padding-bottom:12px;
+}
+.header-row{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-width:0}
+.header-titles{min-width:0;flex:1}
+.header-titles h1{font-family:var(--display);font-size:clamp(18px,4.5vw,24px);margin:0;letter-spacing:-.02em;line-height:1}
+.header-titles .sub{font-size:12px;font-weight:600;color:var(--muted);margin-top:2px}
+.header-actions{display:flex;gap:8px;flex-shrink:0;align-items:center}
+
+.wrap{
+  padding-top:18px;
+  padding-bottom:calc(104px + var(--safe-b));
+}
+.page-stack{display:grid;gap:16px;width:100%;min-width:0}
+.card,.stat,.detail-hero,.list-item{
+  background:var(--card);border:var(--border);border-radius:var(--radius);
+  box-shadow:var(--shadow);padding:16px;width:100%;min-width:0;
+}
+.detail-hero{background:var(--pink)}
+.list-item{padding:14px;cursor:pointer;display:grid;gap:8px}
+.card h2{font-family:var(--display);font-size:14px;letter-spacing:.02em;text-transform:uppercase;margin:0 0 12px}
+.stat{min-height:92px;display:flex;flex-direction:column;justify-content:space-between}
+.stat:nth-child(1){background:var(--blue)}.stat:nth-child(2){background:var(--green)}
+.stat:nth-child(3){background:var(--pink)}.stat:nth-child(4){background:var(--orange)}
+.stat .k{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.stat .v{font-family:var(--display);font-size:clamp(26px,6vw,34px);line-height:1;margin-top:8px}
+.grid-stats{display:grid;gap:12px;grid-template-columns:repeat(2,minmax(0,1fr));width:100%}
+.grid-main{display:grid;gap:12px;grid-template-columns:minmax(0,1fr);width:100%}
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%}
+.chip{display:inline-flex;align-items:center;gap:6px;border:var(--border);border-radius:999px;background:#fff;box-shadow:var(--shadow-sm);padding:6px 10px;font-size:12px;font-weight:700}
+.chip.dot::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--green);border:2px solid #111}
+.btn,.nav-btn,.seg button{
+  border:var(--border);border-radius:12px;background:#fff;box-shadow:var(--shadow-sm);
+  padding:10px 12px;min-height:var(--tap);font-weight:700;
+  transition:transform 140ms var(--ease-out), box-shadow 140ms var(--ease-out);
+}
+.btn:active,.nav-btn:active,.seg button:active,.list-item:active{
+  transform:translate(2px,2px) scale(0.98);box-shadow:1px 1px 0 #111;
+}
+@media (hover:hover) and (pointer:fine){
+  .list-item:hover{transform:translate(-1px,-1px);box-shadow:5px 5px 0 #111}
+}
+.btn.primary{background:var(--ink);color:var(--yellow)}.btn.ghost{background:var(--card)}.btn.block{width:100%}
+.btn.icon{width:var(--tap);padding:0;display:grid;place-items:center;font-size:18px}
+.field{margin:0 0 12px}.field label{display:block;font-size:12px;font-weight:700;margin:0 0 6px;text-transform:uppercase}
+input,select{width:100%;min-height:var(--tap);border:var(--border);border-radius:12px;background:#fff;box-shadow:inset 2px 2px 0 rgba(0,0,0,.06);padding:10px 12px;font-weight:600}
+.seg{display:inline-flex;border:var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-sm);background:#fff}
+.seg button{border:0;border-right:var(--border);border-radius:0;box-shadow:none;background:#fff;min-height:40px;padding:8px 10px;font-size:12px}
+.seg button:last-child{border-right:0}.seg button.active{background:var(--ink);color:var(--yellow)}
+.table-wrap{overflow:auto;border:var(--border);border-radius:12px;background:#fff;box-shadow:var(--shadow-sm)}
+table{width:100%;border-collapse:collapse;min-width:480px;font-size:13px;font-weight:600}
+th,td{padding:12px 10px;border-bottom:2px solid #111;text-align:left;vertical-align:top}
+th{background:var(--violet);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.pill{display:inline-flex;align-items:center;border:2px solid #111;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:800;background:#fff}
+.pill.ok{background:var(--green)}.pill.bad{background:var(--red)}
+.muted{color:var(--muted);font-size:12px;font-weight:600}.mono{font-family:var(--mono);font-size:12px;font-weight:600}
+.err{color:#9f1239;font-weight:700;min-height:1.2em;margin-top:8px;font-size:13px}
+.list{display:grid;gap:10px;width:100%}
+.list-item:nth-child(3n+2){background:#E0F2FE}.list-item:nth-child(3n+3){background:#FCE7F3}
+.list-item .title{font-family:var(--display);font-size:15px;line-height:1.15;margin:0;overflow-wrap:anywhere;word-break:break-word}
+.list-item .summary{margin:0;font-size:13px;font-weight:600;color:var(--muted);overflow-wrap:anywhere;word-break:break-word;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.list-meta{display:flex;flex-wrap:wrap;gap:6px;overflow:hidden}
+.tag{border:2px solid #111;border-radius:999px;padding:3px 8px;font-size:11px;font-weight:800;background:var(--yellow);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ai-box{background:var(--violet);border:2px solid #111;border-radius:10px;box-shadow:2px 2px 0 #111;padding:10px 12px;font-size:12px;font-weight:600;line-height:1.5;overflow-wrap:anywhere;word-break:break-word}
+.ai-box::before{content:"🤖 AI Summary";display:block;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;opacity:.7}
+.ai-box.err{background:var(--red)}
+.btn.sm{padding:6px 10px;min-height:36px;font-size:12px;width:auto;justify-self:start}
+.summarize-btn{margin-top:4px}
+.transcript{background:#fff;border:var(--border);border-radius:12px;box-shadow:var(--shadow-sm);padding:10px;max-height:min(50dvh,420px);overflow:auto}
+.bubble{margin:0 0 10px;padding:10px 12px;border:var(--border);border-radius:12px;box-shadow:2px 2px 0 #111}
+.bubble.user{background:var(--blue)}.bubble.assistant{background:var(--green)}.bubble.system{background:var(--violet)}
+.bubble .role{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}
+.bubble .txt{white-space:pre-wrap;word-break:break-word;font-size:13px;font-weight:600;line-height:1.45}
+.chart-box{position:relative;width:100%;min-height:220px}.chart-box canvas{width:100%!important;max-height:280px}
+.bottom-nav{
+  position:fixed;left:0;right:0;bottom:0;z-index:50;
+  display:grid;grid-template-columns:1fr 1fr 1fr;background:#fff;
+  border-top:var(--border);
+  padding:
+    8px
+    max(var(--gutter), var(--safe-l))
+    calc(8px + var(--safe-b))
+    max(var(--gutter), var(--safe-r));
+  gap:8px;
+}
+.bottom-nav button{
+  border:0;background:transparent;box-shadow:none;border-radius:12px;
+  min-height:52px;display:grid;place-items:center;gap:2px;
+  font-size:11px;font-weight:800;text-transform:uppercase;
+}
+.bottom-nav button span.icon{font-size:18px;line-height:1}
+.bottom-nav button.active{background:var(--yellow);border:2px solid #111}
+.desktop-nav{display:none}
+.empty{border:var(--border);border-radius:12px;background:var(--yellow);box-shadow:var(--shadow-sm);padding:16px;font-weight:700;text-align:center}
+.detail-hero h2{font-family:var(--display);font-size:clamp(18px,5vw,26px);margin:0 0 8px;line-height:1.1}
+.back-row{display:flex;gap:8px;flex-wrap:wrap}
+pre.raw{margin:0;white-space:pre-wrap;word-break:break-word;font-family:var(--mono);font-size:12px;font-weight:600;background:#fff;border:var(--border);border-radius:12px;box-shadow:var(--shadow-sm);padding:12px;max-height:280px;overflow:auto}
+@media (min-width:760px){
+  :root{--gutter:clamp(24px, 5vw, 40px)}
+  .grid-stats{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .grid-main{grid-template-columns:minmax(0,1.25fr) minmax(0,.75fr)}
+  .wrap{padding-top:22px;padding-bottom:36px}
+  .bottom-nav{display:none}
+  .desktop-nav{display:flex!important;gap:8px;flex-wrap:wrap}
+}
+@media (max-width:759px){
+  .header-titles .sub{display:none}
+  table{min-width:0}
+  .table-wrap.stack table,.table-wrap.stack thead{display:none}
+  .table-wrap.stack tbody,.table-wrap.stack tr,.table-wrap.stack td{display:block;width:100%}
+  .table-wrap.stack{border:0;box-shadow:none;background:transparent;width:100%}
+  .table-wrap.stack tr{background:#fff;border:var(--border);border-radius:12px;box-shadow:var(--shadow-sm);margin-bottom:10px;padding:12px;width:100%}
+  .table-wrap.stack td{border:0;padding:4px 0}
+  .table-wrap.stack td::before{content:attr(data-label);display:block;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;opacity:.7}
+  .grid-main > .card,.grid-stats > .stat{min-width:0}
+}
+@media (prefers-reduced-motion:reduce){
+  .btn,.nav-btn,.seg button,.list-item{transition:none}
+}
+</style>
+</head>
+<body>
+<div id="loginView" class="login">
+  <div class="login-card">
+    <div class="brand-kicker">GROK · SPY OPS</div>
+    <h1>Traffic Intel</h1>
+    <p class="lede">See what people are building with your API — projects, IPs, full transcripts.</p>
+    <div class="field"><label>Username</label><input id="user" value="admin" autocomplete="username"/></div>
+    <div class="field"><label>Password</label><input id="pass" type="password" autocomplete="current-password"/></div>
+    <button class="btn primary block" id="loginBtn">Enter dashboard</button>
+    <div class="err" id="loginErr"></div>
+  </div>
+</div>
+
+<div id="appView" class="hidden">
+  <header class="app-header page">
+    <div class="shell header-row">
+      <div class="header-titles">
+        <h1>Traffic Intel</h1>
+        <div class="sub">Full capture · project graph · neo ops</div>
+      </div>
+      <div class="header-actions">
+        <div class="desktop-nav">
+          <button class="nav-btn active" data-view="dashboard">Dashboard</button>
+          <button class="nav-btn" data-view="projects">Projects</button>
+        </div>
+        <button class="btn icon" id="refreshBtn" title="Refresh" aria-label="Refresh">↻</button>
+        <button class="btn icon" id="logoutBtn" title="Logout" aria-label="Logout">⎋</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap page">
+    <div class="shell shell-content page-stack">
+    <section id="view-dashboard" class="page-stack">
+      <div class="toolbar">
+        <div class="seg" id="hoursSeg" role="group" aria-label="Time window">
+          <button data-h="24">24h</button>
+          <button data-h="72">3d</button>
+          <button data-h="168" class="active">7d</button>
+          <button data-h="720">30d</button>
+        </div>
+        <span class="chip dot" id="proxyHint">proxy ready</span>
+      </div>
+      <div class="grid-stats">
+        <div class="stat"><div class="k">Requests</div><div class="v" id="sReq">—</div></div>
+        <div class="stat"><div class="k">Tokens</div><div class="v" id="sTok">—</div></div>
+        <div class="stat"><div class="k">Projects</div><div class="v" id="sProj">—</div></div>
+        <div class="stat"><div class="k">Unique IPs</div><div class="v" id="sIp">—</div></div>
+      </div>
+      <div class="grid-main">
+        <div class="card"><h2>Traffic over time</h2><div class="chart-box"><canvas id="chartTraffic"></canvas></div></div>
+        <div class="card"><h2>Models mix</h2><div class="chart-box"><canvas id="chartModels"></canvas></div></div>
+      </div>
+      <div class="grid-main">
+        <div class="card"><h2>Hot projects</h2><div class="list" id="topProjList"></div></div>
+        <div class="card">
+          <h2>Top client IPs</h2>
+          <div class="table-wrap stack">
+            <table>
+              <thead><tr><th>IP</th><th>Reqs</th><th>Tokens</th></tr></thead>
+              <tbody id="topIpBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-projects" class="hidden page-stack">
+      <div class="card"><h2>All detected projects</h2><div class="list" id="projList"></div></div>
+    </section>
+
+    <section id="view-project" class="hidden page-stack">
+      <div class="back-row">
+        <button class="btn" id="backBtn">← Projects</button>
+        <button class="btn ghost" id="refreshProjBtn">Refresh</button>
+      </div>
+      <div class="detail-hero">
+        <h2 id="pTitle">Project</h2>
+        <p class="muted" id="pSummary" style="margin:0 0 8px"></p>
+        <div class="list-meta" id="pMeta"></div>
+      </div>
+      <div class="card" id="pAiCard" style="display:none"><h2>🤖 AI Summary</h2><div class="ai-box" id="pAiSummary" style="box-shadow:none;border:0;background:transparent;padding:0"></div><button class="btn sm" id="pSummarizeBtn" style="margin-top:8px">✨ Summarize</button></div>
+      <div class="grid-main">
+        <div class="card"><h2>Activity</h2><div class="chart-box"><canvas id="chartProj"></canvas></div></div>
+        <div class="card"><h2>Latest transcript</h2><div class="transcript" id="pTranscript">—</div></div>
+      </div>
+      <div class="card"><h2>Request history</h2><div class="list" id="pReqList"></div></div>
+    </section>
+
+    <section id="view-request" class="hidden page-stack">
+      <div class="back-row"><button class="btn" id="backReqBtn">← Back</button></div>
+      <div class="detail-hero" style="background:var(--blue)">
+        <h2>Request detail</h2>
+        <div class="mono" id="rMeta"></div>
+      </div>
+      <div class="card"><h2>Conversation</h2><div class="transcript" id="rTranscript"></div></div>
+      <div class="card"><h2>Assistant raw</h2><pre class="raw" id="rAssistant"></pre></div>
+    </section>
+    </div>
+  </main>
+
+  <nav class="bottom-nav" aria-label="Primary">
+    <button data-view="dashboard" class="active" type="button"><span class="icon">▣</span>Dash</button>
+    <button data-view="projects" type="button"><span class="icon">▦</span>Projects</button>
+    <button id="mobileRefresh" type="button"><span class="icon">↻</span>Refresh</button>
+  </nav>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+let charts={}, currentProject=null, hours=168;
+function chartDefaults(){ if(!window.Chart)return; Chart.defaults.font.family="'Space Grotesk',system-ui,sans-serif"; Chart.defaults.color='#111'; Chart.defaults.borderColor='#111'; }
+async function api(path, opts={}){
+  const res=await fetch(path,{credentials:'same-origin',headers:{'Content-Type':'application/json',...(opts.headers||{})},...opts});
+  const text=await res.text(); let data; try{data=text?JSON.parse(text):{}}catch{data={raw:text}}
+  if(!res.ok){const e=new Error(data.error||res.statusText); e.status=res.status; throw e;} return data;
+}
+function showApp(on){$('loginView').classList.toggle('hidden',on);$('appView').classList.toggle('hidden',!on)}
+function showView(name){
+  ['dashboard','projects','project','request'].forEach(v=>{const el=$('view-'+v); if(el) el.classList.toggle('hidden',v!==name)});
+  document.querySelectorAll('[data-view]').forEach(b=>{if(b.dataset.view) b.classList.toggle('active',b.dataset.view===name)});
+  const bn=document.querySelector('.bottom-nav'); if(bn) bn.style.display=(name==='dashboard'||name==='projects')?'':'none';
+  window.scrollTo(0,0);
+}
+function fmt(n){n=Number(n||0); if(n>=1e6)return(n/1e6).toFixed(1)+'M'; if(n>=1e3)return(n/1e3).toFixed(1)+'k'; return String(n)}
+function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function upsertChart(id,cfg){if(charts[id])charts[id].destroy(); const el=$(id); if(!el)return; charts[id]=new Chart(el.getContext('2d'),cfg)}
+function brutalChartOptions(extra={}){return Object.assign({responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{boxWidth:12,font:{weight:'700'}}},tooltip:{backgroundColor:'#111',titleColor:'#FFF46A',bodyColor:'#fff',borderColor:'#111',borderWidth:2}},scales:{x:{grid:{color:'rgba(17,17,17,.08)'},ticks:{maxTicksLimit:8,font:{weight:'600'}}},y:{grid:{color:'rgba(17,17,17,.08)'},ticks:{font:{weight:'600'}}}}},extra)}
+function projectCard(p, recentKey='recent'){
+  let kws=[]; try{kws=JSON.parse(p.keywords||'[]')}catch{}
+  let ips=[]; try{ips=JSON.parse(p.client_ips||'[]')}catch{}
+  const recent=p[recentKey]!=null?p[recentKey]:p.request_count;
+  const ai=p.ai_summary?`<div class="ai-box" data-aisummary="${esc(p.id)}">${esc(p.ai_summary)}</div>`:'';
+  return `<article class="list-item" data-pid="${esc(p.id)}"><h3 class="title">${esc(p.title||p.id)}</h3><p class="summary">${esc((p.summary||'').slice(0,140))}</p>${ai}<div class="list-meta"><span class="tag">${recent||0} recent</span><span class="tag">${p.request_count||0} total</span>${ips[0]?`<span class="tag">${esc(ips[0])}</span>`:''}${kws.slice(0,3).map(k=>`<span class="tag">${esc(k)}</span>`).join('')}</div><button class="btn sm summarize-btn" data-summarize="${esc(p.id)}">✨ Summarize</button></article>`;
+}
+function wireSummarizeBtns(scope){
+  scope.querySelectorAll('[data-summarize]').forEach(btn=>{
+    btn.onclick=async(e)=>{
+      e.stopPropagation();
+      const pid=btn.dataset.summarize;
+      const card=btn.closest('.list-item');
+      let box=card.querySelector('[data-aisummary]');
+      if(!box){box=document.createElement('div');box.className='ai-box';box.dataset.aisummary=pid;card.insertBefore(box,btn)}
+      btn.disabled=true;btn.textContent='⏳ Summarizing…';
+      try{
+        const r=await api('/intel/api/projects/'+encodeURIComponent(pid)+'/summarize',{method:'POST',body:'{}'});
+        if(r.error){box.innerHTML='<strong>⚠ '+esc(r.error)+'</strong>';box.classList.add('err')}
+        else{box.textContent=r.ai_summary;box.classList.remove('err')}
+      }catch(err){box.innerHTML='<strong>⚠ '+(err.message||'failed')+'</strong>';box.classList.add('err')}
+      finally{btn.disabled=false;btn.textContent='✨ Summarize'}
+    };
+  });
+}
+async function loadDashboard(){
+  const o=await api('/intel/api/overview?hours='+hours);
+  $('sReq').textContent=fmt(o.total_requests); $('sTok').textContent=fmt(o.total_tokens);
+  $('sProj').textContent=fmt(o.project_count); $('sIp').textContent=fmt(o.unique_ips);
+  $('proxyHint').textContent='capture :'+(location.port||'8001');
+  upsertChart('chartTraffic',{type:'line',data:{labels:(o.series.labels||[]).map(x=>x.slice(5).replace('T',' ')),datasets:[
+    {label:'Requests',data:o.series.requests,borderColor:'#111',backgroundColor:'#7DD3FC',borderWidth:3,tension:.25,fill:true,pointRadius:3,pointBackgroundColor:'#FFF46A',pointBorderColor:'#111',pointBorderWidth:2},
+    {label:'Tokens',data:o.series.tokens,borderColor:'#111',backgroundColor:'#86EFAC',borderWidth:3,tension:.25,fill:true,pointRadius:3,pointBackgroundColor:'#FF8FAB',pointBorderColor:'#111',pointBorderWidth:2,yAxisID:'y1'}
+  ]},options:brutalChartOptions({scales:{x:{grid:{color:'rgba(17,17,17,.08)'},ticks:{maxTicksLimit:6,font:{weight:'600'}}},y:{position:'left',grid:{color:'rgba(17,17,17,.08)'},ticks:{font:{weight:'600'}}},y1:{position:'right',grid:{drawOnChartArea:false},ticks:{font:{weight:'600'}}}}})});
+  const models=o.top_models||[];
+  upsertChart('chartModels',{type:'doughnut',data:{labels:models.map(m=>m.model||'unknown'),datasets:[{data:models.map(m=>m.c),backgroundColor:['#7DD3FC','#86EFAC','#FF8FAB','#FDBA74','#C4B5FD','#FFF46A','#FDA4AF','#A7F3D0'],borderColor:'#111',borderWidth:3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{font:{weight:'700'},boxWidth:12}}}}});
+  const list=$('topProjList');
+  list.innerHTML=(o.top_projects||[]).map(p=>projectCard(p)).join('')||'<div class="empty">No traffic yet — point clients at this proxy port.</div>';
+  list.querySelectorAll('[data-pid]').forEach(el=>el.onclick=()=>openProject(el.dataset.pid));
+  wireSummarizeBtns(list);
+  $('topIpBody').innerHTML=(o.top_ips||[]).map(r=>`<tr><td data-label="IP" class="mono">${esc(r.client_ip)}</td><td data-label="Reqs">${r.c}</td><td data-label="Tokens">${fmt(r.t)}</td></tr>`).join('')||'<tr><td colspan="3"><div class="empty">No IPs yet</div></td></tr>';
+}
+async function loadProjects(){
+  const data=await api('/intel/api/projects');
+  const list=$('projList');
+  list.innerHTML=(data.projects||[]).map(p=>projectCard(p,'request_count')).join('')||'<div class="empty">No projects detected yet</div>';
+  list.querySelectorAll('[data-pid]').forEach(el=>el.onclick=()=>openProject(el.dataset.pid));
+  wireSummarizeBtns(list);
+}
+async function openProject(pid){
+  currentProject=pid;
+  const d=await api('/intel/api/projects/'+encodeURIComponent(pid));
+  const p=d.project;
+  $('pTitle').textContent=p.title||pid; $('pSummary').textContent=p.summary||'';
+  if(p.ai_summary){$('pAiCard').style.display='';$('pAiSummary').textContent=p.ai_summary}
+  else{$('pAiCard').style.display='none'}
+  $('pSummarizeBtn').onclick=async()=>{
+    const btn=$('pSummarizeBtn');btn.disabled=true;btn.textContent='⏳ Summarizing…';
+    try{const r=await api('/intel/api/projects/'+encodeURIComponent(pid)+'/summarize',{method:'POST',body:'{}'});
+      if(r.error){$('pAiCard').style.display='';$('pAiSummary').innerHTML='<strong>⚠ '+esc(r.error)+'</strong>'}
+      else{$('pAiCard').style.display='';$('pAiSummary').textContent=r.ai_summary}
+    }catch(err){$('pAiCard').style.display='';$('pAiSummary').innerHTML='<strong>⚠ '+(err.message||'failed')+'</strong>'}
+    finally{btn.disabled=false;btn.textContent='✨ Summarize'}
+  };
+  let ips=[]; try{ips=JSON.parse(p.client_ips||'[]')}catch{}
+  let kws=[]; try{kws=JSON.parse(p.keywords||'[]')}catch{}
+  $('pMeta').innerHTML=[p.model&&`<span class="tag">${esc(p.model)}</span>`,p.key_prefix&&`<span class="tag">${esc(p.key_prefix)}</span>`,...ips.slice(0,4).map(ip=>`<span class="tag">${esc(ip)}</span>`),...kws.slice(0,5).map(k=>`<span class="tag">${esc(k)}</span>`)].filter(Boolean).join('');
+  upsertChart('chartProj',{type:'bar',data:{labels:d.series.labels,datasets:[{label:'Requests',data:d.series.requests,backgroundColor:'#7DD3FC',borderColor:'#111',borderWidth:2},{label:'Tokens',data:d.series.tokens,backgroundColor:'#86EFAC',borderColor:'#111',borderWidth:2}]},options:brutalChartOptions()});
+  const latest=(d.requests||[])[0];
+  if(latest){$('pTranscript').innerHTML=`<div class="bubble user"><div class="role">user</div><div class="txt">${esc(latest.user_text||'')}</div></div><div class="bubble assistant"><div class="role">assistant</div><div class="txt">${esc(latest.assistant_text||'')}</div></div>`}
+  else $('pTranscript').innerHTML='<div class="empty">No transcript</div>';
+  $('pReqList').innerHTML=(d.requests||[]).map(r=>`<article class="list-item" data-rid="${esc(r.id)}" style="background:#fff"><div class="list-meta"><span class="tag">${esc((r.ts||'').replace('T',' ').slice(0,16))}</span><span class="tag">${esc(r.client_ip||'')}</span><span class="pill ${r.status<400?'ok':'bad'}">${r.status}</span><span class="tag">${fmt(r.total_tokens)} tok</span></div><p class="summary">${esc((r.user_text||'').slice(0,160))}</p></article>`).join('')||'<div class="empty">No requests</div>';
+  $('pReqList').querySelectorAll('[data-rid]').forEach(el=>el.onclick=()=>openRequest(el.dataset.rid));
+  showView('project');
+}
+async function openRequest(rid){
+  const r=await api('/intel/api/requests/'+encodeURIComponent(rid));
+  $('rMeta').textContent=`${r.ts||''} · ${r.client_ip||''} · ${r.method||''} ${r.path||''} · ${r.status} · ${r.duration_ms}ms · ${r.model||''} · ${r.key_prefix||''}`;
+  let msgs=[]; try{msgs=JSON.parse(r.messages_json||'[]')}catch{}
+  if(!msgs.length&&r.user_text) msgs=[{role:'user',text:r.user_text}];
+  $('rTranscript').innerHTML=msgs.map(m=>`<div class="bubble ${esc(m.role||'user')}"><div class="role">${esc(m.role||'user')}</div><div class="txt">${esc(m.text||'')}</div></div>`).join('')||'<div class="empty">No messages parsed</div>';
+  if(r.assistant_text) $('rTranscript').innerHTML+=`<div class="bubble assistant"><div class="role">assistant</div><div class="txt">${esc(r.assistant_text)}</div></div>`;
+  $('rAssistant').textContent=r.assistant_text||''; showView('request');
+}
+async function refreshCurrent(){
+  if(!$('view-project').classList.contains('hidden')&&currentProject) return openProject(currentProject);
+  if(!$('view-request').classList.contains('hidden')) return;
+  if(!$('view-projects').classList.contains('hidden')) return loadProjects();
+  return loadDashboard();
+}
+$('loginBtn').onclick=async()=>{$('loginErr').textContent=''; try{await api('/intel/api/login',{method:'POST',body:JSON.stringify({username:$('user').value,password:$('pass').value})}); chartDefaults(); showApp(true); await loadDashboard(); showView('dashboard')}catch(e){$('loginErr').textContent=e.message||'login failed'}};
+$('pass').addEventListener('keydown',e=>{if(e.key==='Enter')$('loginBtn').click()});
+$('logoutBtn').onclick=async()=>{try{await api('/intel/api/logout',{method:'POST',body:'{}'})}catch{} showApp(false)};
+$('refreshBtn').onclick=()=>refreshCurrent(); $('mobileRefresh').onclick=()=>refreshCurrent();
+$('backBtn').onclick=async()=>{showView('projects'); await loadProjects()};
+$('refreshProjBtn').onclick=async()=>{if(currentProject) await openProject(currentProject)};
+$('backReqBtn').onclick=async()=>{if(currentProject) await openProject(currentProject); else {showView('projects'); await loadProjects()}};
+document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',async()=>{const v=b.dataset.view; if(!v)return; showView(v); if(v==='dashboard') await loadDashboard(); if(v==='projects') await loadProjects()}));
+document.querySelectorAll('#hoursSeg button').forEach(b=>b.onclick=async()=>{document.querySelectorAll('#hoursSeg button').forEach(x=>x.classList.remove('active')); b.classList.add('active'); hours=Number(b.dataset.h||168); await loadDashboard()});
+(async()=>{chartDefaults(); try{await api('/intel/api/overview?hours=24'); showApp(true); await loadDashboard(); showView('dashboard')}catch{showApp(false)}})();
+</script>
+</body>
+</html>
