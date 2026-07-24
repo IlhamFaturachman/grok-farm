@@ -40,3 +40,20 @@ _probe_*.py
 _diag_*.py
 _synthlabs*
 *.har
+
+# Groq free pool (keys + runtime)
+groq_keys.txt
+results/groq/
+
+# liam-auto workspace (nested projects; keep source, drop junk/secrets)
+liam-auto/**/node_modules/
+liam-auto/**/venv/
+liam-auto/**/.venv/
+liam-auto/**/__pycache__/
+liam-auto/**/bin/
+liam-auto/**/results/
+liam-auto/**/*.db
+liam-auto/**/*.db-shm
+liam-auto/**/*.db-wal
+liam-auto/**/.env
+liam-auto/**/.env.local

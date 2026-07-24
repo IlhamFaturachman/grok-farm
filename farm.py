@@ -74,6 +74,18 @@ IMAP_PASS = _env("GROK_IMAP_PASS").replace(" ", "")
 IMAP_HOST = _env("GROK_IMAP_HOST", "imap.gmail.com")
 IMAP_PORT = int(_env("GROK_IMAP_PORT", "993") or "993")
 EMAIL_DOMAIN = _env("GROK_EMAIL_DOMAIN").lstrip("@")
+# Comma/space-separated list for multi-domain farm (random pick per account).
+# Example: GROK_EMAIL_DOMAINS=liamllc.biz.id,lciano.biz.id
+_raw_domains = _env("GROK_EMAIL_DOMAINS") or EMAIL_DOMAIN
+EMAIL_DOMAINS: list[str] = []
+for _part in re.split(r"[\s,;]+", _raw_domains or ""):
+    d = _part.strip().lstrip("@").lower()
+    if d and d not in EMAIL_DOMAINS:
+        EMAIL_DOMAINS.append(d)
+if not EMAIL_DOMAINS and EMAIL_DOMAIN:
+    EMAIL_DOMAINS = [EMAIL_DOMAIN.lstrip("@").lower()]
+if EMAIL_DOMAINS and not EMAIL_DOMAIN:
+    EMAIL_DOMAIN = EMAIL_DOMAINS[0]
 EMAIL_MODE = _env("GROK_EMAIL_MODE", "domain").lower()
 if EMAIL_MODE not in ("plus_trick", "domain"):
     EMAIL_MODE = "domain"
@@ -85,7 +97,7 @@ HEADLESS = _env_bool("GROK_HEADLESS", False)  # headed recommended for Turnstile
 SPAWN_DELAY = float(_env("GROK_SPAWN_DELAY", "2") or "2")
 
 # Fail-fast timeouts (stuck / unclear page states should free the worker slot)
-OTP_TIMEOUT_S = max(30, int(_env("GROK_OTP_TIMEOUT", "120") or "120"))
+OTP_TIMEOUT_S = max(30, int(_env("GROK_OTP_TIMEOUT", "180") or "180"))
 # whole account hard deadline (signup+login+oauth)
 ACCOUNT_TIMEOUT_S = max(120, int(_env("GROK_ACCOUNT_TIMEOUT", "480") or "480"))  # 8 min
 # complete_signup turnstile+submit: max wall time before hard fail
@@ -713,7 +725,9 @@ def init_batch(max_accounts: int, concurrent: int) -> str:
         "batch_id": BATCH_ID,
         "started_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "email_mode": EMAIL_MODE,
-        "email_domain": EMAIL_DOMAIN if EMAIL_MODE == "domain" else None,
+        "email_domain": (
+            ",".join(EMAIL_DOMAINS) if EMAIL_MODE == "domain" and EMAIL_DOMAINS else None
+        ),
         "max_accounts": max_accounts,
         "concurrent": concurrent,
         "email_local_len": EMAIL_LOCAL_LEN,
@@ -729,11 +743,14 @@ async def generate_email() -> str:
     async with _emails_lock:
         for _ in range(200):
             if EMAIL_MODE == "domain":
-                if not EMAIL_DOMAIN:
-                    raise RuntimeError("GROK_EMAIL_DOMAIN required for domain mode")
+                if not EMAIL_DOMAINS:
+                    raise RuntimeError(
+                        "GROK_EMAIL_DOMAIN or GROK_EMAIL_DOMAINS required for domain mode"
+                    )
                 # secrets-based alnum (not random.choices) + global used set
                 name = _crypto_local_part(EMAIL_LOCAL_LEN)
-                addr = f"{name}@{EMAIL_DOMAIN.lstrip('@')}"
+                domain = random.choice(EMAIL_DOMAINS)
+                addr = f"{name}@{domain}"
             else:
                 base = GMAIL_BASE or IMAP_USER
                 if not base or "@" not in base:
@@ -818,8 +835,12 @@ def read_otp_from_imap_sync(target_email: str, timeout: int = 180, since_ts: flo
     """Poll Gmail IMAP for xAI confirmation code addressed to target_email.
 
     Codes arrive from noreply@x.ai with subject like "K35-1QR xAI confirmation code".
-    Catch-all domains forward into this inbox; match To/Delivered-To/body for the alias.
-    Concurrent workers: each OTP code is claimed once (no double-use of same mail).
+    Catch-all domains forward into this inbox; match To header for the alias.
+
+    Performance (why rewritten again):
+    - Reconnect + sequential FETCH of last-80 headers took ~9s/20 msgs under load →
+      poller missed mail that was already in INBOX for 2+ minutes.
+    - Prefer persistent connection + TO UID SEARCH (fast) + batch header fetch.
     """
     print(f"[IMAP] Waiting for xAI OTP to {target_email}...", flush=True)
     start = time.time()
@@ -827,94 +848,194 @@ def read_otp_from_imap_sync(target_email: str, timeout: int = 180, since_ts: flo
     target_lower = target_email.lower()
     target_local = target_lower.split("@")[0]
     seen_uids: set[bytes] = set()
+    since_date = time.strftime("%d-%b-%Y", time.gmtime(max(0, since_ts - 3600)))
+    hdr_fields = (
+        "(BODY.PEEK[HEADER.FIELDS (SUBJECT TO DELIVERED-TO X-ORIGINAL-TO "
+        "X-FORWARDED-TO CC FROM DATE)])"
+    )
 
-    while time.time() - start < timeout:
+    def _header_blob(msg) -> str:
+        return " ".join(
+            filter(
+                None,
+                [
+                    msg.get("To", ""),
+                    msg.get("Delivered-To", ""),
+                    msg.get("X-Original-To", ""),
+                    msg.get("X-Forwarded-To", ""),
+                    msg.get("Cc", ""),
+                ],
+            )
+        ).lower()
+
+    def _try_claim(subject: str, body: str, to_blob: str) -> str | None:
+        header_hit = target_lower in to_blob or target_local in to_blob
+        body_l = (body or "").lower()
+        body_hit = target_lower in body_l or (
+            len(target_local) >= 8 and target_local in body_l
+        )
+        subj_is_xai = bool(
+            _XAI_SUBJ_CODE_RE.search(subject)
+            or re.search(r"xAI\s+confirmation", subject or "", re.I)
+        )
+        if not header_hit and not (body_hit and subj_is_xai):
+            return None
+        code = _extract_xai_code(subject, body)
+        if not code:
+            return None
+        with _claimed_otps_lock:
+            if code in _claimed_otps_sync:
+                return None
+            _claimed_otps_sync.add(code)
+        print(
+            f"[IMAP] Found OTP: {code} for {target_email} (subj={subject[:60]!r})",
+            flush=True,
+        )
+        return code
+
+    def _parse_fetch_parts(data) -> list[tuple[bytes, bytes]]:
+        """Return list of (uid_or_empty, header_bytes) from IMAP FETCH response."""
+        out: list[tuple[bytes, bytes]] = []
+        if not data:
+            return out
+        for part in data:
+            if not isinstance(part, tuple) or not part[1]:
+                continue
+            meta = part[0]
+            if isinstance(meta, bytes):
+                m = re.search(rb"UID\s+(\d+)", meta, re.I)
+                uid = m.group(1) if m else b""
+            else:
+                uid = b""
+            out.append((uid, part[1]))
+        return out
+
+    def _match_header_bytes(raw: bytes) -> str | None:
         try:
-            mail = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
-            mail.login(IMAP_USER, IMAP_PASS)
-            mail.select("INBOX")
-            status, messages = mail.search(None, '(FROM "x.ai")')
-            msg_ids = messages[0].split() if messages and messages[0] else []
-            if not msg_ids:
-                status, messages = mail.search(None, '(SUBJECT "confirmation code")')
-                msg_ids = messages[0].split() if messages and messages[0] else []
+            msg = message_from_bytes(raw)
+        except Exception:
+            return None
+        subject = msg.get("Subject", "") or ""
+        to_blob = _header_blob(msg)
+        return _try_claim(subject, "", to_blob)
 
-            for mid in reversed(msg_ids[-40:]):
-                if mid in seen_uids:
-                    continue
-                status, data = mail.fetch(mid, "(RFC822)")
-                if not data or not data[0]:
-                    continue
-                msg = message_from_bytes(data[0][1])
-                subject = msg.get("Subject", "") or ""
-                to_addr = " ".join(
-                    filter(
-                        None,
-                        [
-                            msg.get("To", ""),
-                            msg.get("Delivered-To", ""),
-                            msg.get("X-Original-To", ""),
-                            msg.get("Cc", ""),
-                        ],
-                    )
-                ).lower()
+    def _uid_search(mail, criterion: str) -> list[bytes]:
+        try:
+            status, messages = mail.uid("SEARCH", None, criterion)
+        except Exception:
+            return []
+        if status != "OK" or not messages or not messages[0]:
+            return []
+        return messages[0].split()
 
-                body = ""
-                if msg.is_multipart():
-                    for part in msg.walk():
-                        ct = part.get_content_type()
-                        if ct == "text/plain":
-                            try:
-                                body = part.get_payload(decode=True).decode("utf-8", "replace")
-                            except Exception:
-                                body = ""
-                            if body:
-                                break
-                        if ct == "text/html" and not body:
-                            try:
-                                body = part.get_payload(decode=True).decode("utf-8", "replace")
-                            except Exception:
-                                body = ""
-                else:
-                    try:
-                        body = msg.get_payload(decode=True).decode("utf-8", "replace")
-                    except Exception:
-                        body = str(msg.get_payload() or "")
-
-                # Match recipient (catch-all alias, plus-trick, or body mention)
-                # Prefer header match; body match only if subject is clearly xAI confirmation
-                header_hit = target_lower in to_addr or target_local in to_addr
-                body_l = body.lower()
-                body_hit = target_lower in body_l or (
-                    len(target_local) >= 8 and target_local in body_l
-                )
-                subj_is_xai = bool(_XAI_SUBJ_CODE_RE.search(subject) or re.search(
-                    r"xAI\s+confirmation", subject or "", re.I
-                ))
-                if not header_hit and not (body_hit and subj_is_xai):
-                    seen_uids.add(mid)
-                    continue
-
-                code = _extract_xai_code(subject, body)
+    def _claim_uids(mail, uids: list[bytes]) -> str | None:
+        """Batch-fetch headers for UIDs (newest first), claim matching OTP."""
+        # newest first, skip seen, cap work per cycle
+        ordered = [u for u in reversed(uids) if u not in seen_uids][:40]
+        if not ordered:
+            return None
+        # batch in chunks of 25
+        for i in range(0, len(ordered), 25):
+            chunk = ordered[i : i + 25]
+            seq = b",".join(chunk)
+            try:
+                status, data = mail.uid("FETCH", seq, hdr_fields)
+            except Exception as e:
+                print(f"[IMAP] batch fetch err: {e}", flush=True)
+                continue
+            if status != "OK" or not data:
+                continue
+            # Map results — order may not match request; parse UID from meta
+            parsed = _parse_fetch_parts(data)
+            # If UID missing from meta, zip with chunk order (Gmail usually includes UID)
+            if parsed and all(not u for u, _ in parsed) and len(parsed) == len(chunk):
+                parsed = list(zip(chunk, [r for _, r in parsed]))
+            for uid, raw in parsed:
+                if uid:
+                    seen_uids.add(uid)
+                code = _match_header_bytes(raw)
                 if code:
-                    # Concurrent: claim code once so two workers don't take same OTP
-                    with _claimed_otps_lock:
-                        if code in _claimed_otps_sync:
-                            seen_uids.add(mid)
-                            continue
-                        _claimed_otps_sync.add(code)
-                    print(f"[IMAP] Found OTP: {code} for {target_email} (subj={subject[:60]!r})", flush=True)
                     try:
-                        mail.store(mid, "+FLAGS", "\\Seen")
+                        if uid:
+                            mail.uid("STORE", uid, "+FLAGS", "\\Seen")
                     except Exception:
                         pass
-                    mail.logout()
                     return code
-                seen_uids.add(mid)
-            mail.logout()
+            # mark chunk seen even if no match
+            for uid in chunk:
+                seen_uids.add(uid)
+        return None
+
+    def _poll_once(mail) -> str | None:
+        # 1) Fast path: TO search (catch-all alias) — usually <1s
+        for crit in (
+            f'(TO "{target_lower}")',
+            f"(TO {target_lower})",
+            f'(HEADER To "{target_lower}")',
+            f'(TEXT "{target_local}" SUBJECT "confirmation code")',
+        ):
+            ids = _uid_search(mail, crit)
+            if ids:
+                code = _claim_uids(mail, ids[-20:])
+                if code:
+                    return code
+                break  # had hits but none claimable
+
+        # 2) Recent confirmation window — only last 30, batch fetch
+        recent = _uid_search(mail, f'(SINCE {since_date} SUBJECT "confirmation code")')
+        if not recent:
+            recent = _uid_search(mail, '(SUBJECT "confirmation code")')
+        if recent:
+            code = _claim_uids(mail, recent[-30:])
+            if code:
+                return code
+        return None
+
+    mail = None
+    consecutive_err = 0
+    while time.time() - start < timeout:
+        try:
+            if mail is None:
+                mail = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
+                mail.login(IMAP_USER, IMAP_PASS)
+                mail.select("INBOX")
+            else:
+                # refresh mailbox view without full reconnect
+                try:
+                    mail.select("INBOX")
+                except Exception:
+                    try:
+                        mail.logout()
+                    except Exception:
+                        pass
+                    mail = None
+                    continue
+
+            found = _poll_once(mail)
+            consecutive_err = 0
+            if found:
+                try:
+                    mail.logout()
+                except Exception:
+                    pass
+                return found
         except Exception as e:
+            consecutive_err += 1
             print(f"[IMAP] Error: {e}", flush=True)
-        time.sleep(4)
+            if mail is not None:
+                try:
+                    mail.logout()
+                except Exception:
+                    pass
+                mail = None
+            if consecutive_err >= 8:
+                time.sleep(5)
+        time.sleep(1.5)
+    if mail is not None:
+        try:
+            mail.logout()
+        except Exception:
+            pass
     print("[IMAP] Timeout waiting for OTP", flush=True)
     return None
 
@@ -3012,8 +3133,11 @@ async def main():
     if not IMAP_USER or not IMAP_PASS:
         print("ERROR: set GROK_IMAP_USER and GROK_IMAP_PASS in .env", flush=True)
         sys.exit(1)
-    if EMAIL_MODE == "domain" and not EMAIL_DOMAIN:
-        print("ERROR: set GROK_EMAIL_DOMAIN for domain mode", flush=True)
+    if EMAIL_MODE == "domain" and not EMAIL_DOMAINS:
+        print(
+            "ERROR: set GROK_EMAIL_DOMAIN or GROK_EMAIL_DOMAINS for domain mode",
+            flush=True,
+        )
         sys.exit(1)
     if EMAIL_MODE == "plus_trick" and not (GMAIL_BASE or IMAP_USER):
         print("ERROR: set GROK_GMAIL_BASE or GROK_IMAP_USER for plus_trick", flush=True)
@@ -3027,7 +3151,13 @@ async def main():
     print("=" * 60, flush=True)
     print(f"  Email mode : {EMAIL_MODE}", flush=True)
     if EMAIL_MODE == "domain":
-        print(f"  Domain     : @{EMAIL_DOMAIN}", flush=True)
+        if len(EMAIL_DOMAINS) > 1:
+            print(
+                f"  Domains    : {', '.join('@' + d for d in EMAIL_DOMAINS)} (random)",
+                flush=True,
+            )
+        else:
+            print(f"  Domain     : @{EMAIL_DOMAINS[0]}", flush=True)
     else:
         print(f"  Gmail base : {GMAIL_BASE or IMAP_USER}", flush=True)
     print(f"  IMAP       : {IMAP_USER} @ {IMAP_HOST}:{IMAP_PORT}", flush=True)
@@ -3134,9 +3264,11 @@ async def main():
     counter_lock = asyncio.Lock()
     start = time.time()
     tick = asyncio.create_task(HUD.ticker())
+    consecutive_fails = 0
+    recent_fail_errors: list[str] = []
 
     async def worker():
-        nonlocal created, failed, next_attempt
+        nonlocal created, failed, next_attempt, consecutive_fails, recent_fail_errors
         while True:
             async with counter_lock:
                 if next_attempt > target:
@@ -3150,8 +3282,34 @@ async def main():
             async with counter_lock:
                 if res:
                     created += 1
+                    consecutive_fails = 0
+                    recent_fail_errors.clear()
                 else:
                     failed += 1
+                    consecutive_fails += 1
+                    err = ""
+                    try:
+                        if FAILED_JSON.is_file():
+                            rows = json.loads(FAILED_JSON.read_text(encoding="utf-8"))
+                            if isinstance(rows, list) and rows:
+                                err = str((rows[-1] or {}).get("error") or "")
+                    except Exception:
+                        pass
+                    if err:
+                        recent_fail_errors.append(err)
+                        recent_fail_errors[:] = recent_fail_errors[-12:]
+                    # Live Telegram/email if many IP-like fails in a row
+                    if consecutive_fails >= 5:
+                        try:
+                            from notify import maybe_alert_midrun
+
+                            maybe_alert_midrun(
+                                consecutive_fails=consecutive_fails,
+                                last_errors=list(recent_fail_errors),
+                                batch_id=BATCH_ID,
+                            )
+                        except Exception:
+                            pass
             # HUD already updated via emit_success / emit_failed
 
     try:
@@ -3235,6 +3393,14 @@ async def main():
     if g2a_info:
         print(g2a_info, flush=True)
     print("=" * 60, flush=True)
+
+    # Telegram / email if fail-rate or IP-suspect patterns trip thresholds
+    try:
+        from notify import maybe_alert_batch
+
+        maybe_alert_batch(BATCH_DIR, created=created, failed=failed)
+    except Exception as e:
+        print(f"[notify] skipped: {e}", flush=True)
 
 
 if __name__ == "__main__":

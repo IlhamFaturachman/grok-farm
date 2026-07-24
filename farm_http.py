@@ -425,6 +425,13 @@ async def main():
         print(f"  g2a  : {g2a_info}")
     print("=" * 60)
 
+    try:
+        from notify import maybe_alert_batch
+
+        maybe_alert_batch(BATCH_DIR, created=created, failed=failed)
+    except Exception as e:
+        print(f"[notify] skipped: {e}", flush=True)
+
     return 0
 
 

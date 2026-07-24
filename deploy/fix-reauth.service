@@ -1,0 +1,12 @@
+[Unit]
+Description=Disable grok2api reauthRequired accounts
+After=network.target docker.service
+
+[Service]
+Type=oneshot
+User=farm
+Group=farm
+WorkingDirectory=/opt/grok-farm
+Environment=PATH=/opt/grok-farm/.venv/bin:/usr/bin
+ExecStart=/opt/grok-farm/.venv/bin/python /opt/grok-farm/scripts/fix_reauth_accounts.py
+Nice=10

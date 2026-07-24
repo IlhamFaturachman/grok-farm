@@ -8,9 +8,10 @@ OpenAI **and** Anthropic compatible endpoint powered by grok2api.
 
 | | |
 |---|---|
-| **Base URL** | `https://api.example.com` |
-| **API Key** | _(ask the admin for your key)_ |
-| **Models** | `grok-4.5`, `grok-composer-2.5-fast` |
+| **Base URL (OpenAI)** | `https://api.liamnevalackin.my.id/v1` |
+| **Base URL (Anthropic SDK)** | `https://api.liamnevalackin.my.id` (SDK appends `/v1/messages`) |
+| **API Key** | `g2a_…` from [Liam API Shop](https://shop.liamnevalackin.my.id) |
+| **Models** | `grok-4.5` |
 
 The endpoint supports both the **OpenAI** and **Anthropic** API formats.
 Use whichever your client or SDK already speaks — no special adapters needed.
@@ -20,11 +21,23 @@ Use whichever your client or SDK already speaks — no special adapters needed.
 ## Quick test (curl)
 
 ```bash
-curl https://api.example.com/v1/chat/completions \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+# OpenAI-compatible
+curl https://api.liamnevalackin.my.id/v1/chat/completions \
+  -H "Authorization: Bearer g2a_YOUR_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "grok-4.5",
+    "messages": [{"role": "user", "content": "Say hi in one word"}]
+  }'
+
+# Anthropic-compatible
+curl https://api.liamnevalackin.my.id/v1/messages \
+  -H "x-api-key: g2a_YOUR_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "grok-4.5",
+    "max_tokens": 256,
     "messages": [{"role": "user", "content": "Say hi in one word"}]
   }'
 ```
@@ -57,8 +70,8 @@ print(response.choices[0].message.content)
 import OpenAI from "openai";
 
 const client = new OpenAI({
-  baseURL: "https://api.example.com/v1",
-  apiKey: "YOUR_API_KEY",
+  baseURL: "https://api.liamnevalackin.my.id/v1",
+  apiKey: "g2a_YOUR_KEY",
 });
 
 const response = await client.chat.completions.create({
@@ -75,8 +88,8 @@ console.log(response.choices[0].message.content);
 from langchain_openai import ChatOpenAI
 
 llm = ChatOpenAI(
-    base_url="https://api.example.com/v1",
-    api_key="YOUR_API_KEY",
+    base_url="https://api.liamnevalackin.my.id/v1",
+    api_key="g2a_YOUR_KEY",
     model="grok-4.5",
 )
 
@@ -112,8 +125,8 @@ print(response.content[0].text)
 import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic({
-  baseURL: "https://api.example.com",
-  apiKey: "YOUR_API_KEY",
+  baseURL: "https://api.liamnevalackin.my.id",
+  apiKey: "g2a_YOUR_KEY",
 });
 
 const response = await client.messages.create({
@@ -235,7 +248,27 @@ Per-key limits are set by the admin. If you hit `429 Too Many Requests`, slow do
 Yes — standard OpenAI tool-calling format is supported.
 
 **Does it support vision/image inputs?**
-Depends on the model — `grok-4.5` supports image inputs in OpenAI format.
+Yes — `grok-4.5` accepts OpenAI multimodal `image_url` / `data:image…` in chat completions.
+
+**Does it support image generation / edit?**
+Yes (free Build path via tool):
+
+```bash
+# Generate
+curl https://api.liamnevalackin.my.id/v1/images/generations \
+  -H "Authorization: Bearer g2a_..." \
+  -H "Content-Type: application/json" \
+  -d '{"model":"grok-4.5","prompt":"a red apple on white background"}'
+
+# Edit
+curl https://api.liamnevalackin.my.id/v1/images/edits \
+  -H "Authorization: Bearer g2a_..." \
+  -H "Content-Type: application/json" \
+  -d '{"model":"grok-4.5","prompt":"make the sky purple","image":"data:image/png;base64,..."}'
+```
+
+Response: OpenAI-style `{"created":…,"data":[{"b64_json":"…"}],"usage":{…}}`.  
+Uses Grok `image_generation` tool under the hood (not paid `api.x.ai` Imagine).
 
 **Can I use this with `ollama` / `litellm` / other proxies?**
 Yes — any proxy that supports custom OpenAI or Anthropic base URLs can point here.
