@@ -1,0 +1,8 @@
+{
+  "name": "@mocasus/vpnx",
+  "version": "2.0.0",
+  "description": "VPN Proxy Exchange",
+  "bin": { "vpnx": "./cli.js" },
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/mocasus/vpnx" }
+}
