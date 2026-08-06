@@ -80,7 +80,33 @@ services:
     cap_add:
       - NET_ADMIN
 
-  # Optional: FlareSolverr clearance for Cloudflare-protected upstreams.
+
+  # VPNX — rotating VPN proxy (VPN Gate, free, multi-country).
+  # SOCKS5 :1081 (gateway egress, auth OK) + HTTP :8082 (browser farming, auth OK).
+  # API :9090 for rotate/connect/status.
+  # Build from vpnx-build/ dir or pull mocasus/vpnx (if published).
+  # Ports bound to 172.18.0.1 so grok2api container can reach them.
+  vpnx:
+    container_name: vpnx
+    build:
+      context: ./vpnx-build
+    profiles: ["vpnx"]
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    ports:
+      - "172.18.0.1:1081:1080"
+      - "172.18.0.1:8082:8080"
+      - "172.18.0.1:9090:8000"
+    environment:
+      API_TOKEN: "${VPNX_API_TOKEN:-liam-vpnx-secret}"
+      SOCKS_USER: "${VPNX_SOCKS_USER:-vpnx}"
+      SOCKS_PASS: "${VPNX_SOCKS_PASS:-liam2026}"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
   # Enable in admin → Settings → clearance mode = FlareSolverr, URL http://flaresolverr:8191.
   # Start with: docker compose --profile flaresolverr up -d
   # flaresolverr:
