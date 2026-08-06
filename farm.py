@@ -1132,7 +1132,7 @@ async def launch_browser(proxy_url: str | None):
         "humanize": 0.5,
         "os": random.choice(["windows", "macos", "linux"]),
         "locale": "en-US",
-        "geoip": True,
+        "geoip": _env_bool("GROK_GEOIP", False),
         "block_webrtc": True,
     }
     if proxy_url:
