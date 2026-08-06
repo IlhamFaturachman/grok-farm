@@ -103,6 +103,68 @@ services:
       API_TOKEN: "${VPNX_API_TOKEN:-liam-vpnx-secret}"
       SOCKS_USER: "${VPNX_SOCKS_USER:-vpnx}"
       SOCKS_PASS: "${VPNX_SOCKS_PASS:-liam2026}"
+      CONNECT_COUNTRY: JP
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  # VPNX KR — Korea exit node.
+  vpnx-kr:
+    container_name: vpnx-kr
+    profiles: ["vpnx"]
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    ports:
+      - "172.18.0.1:1085:1080"
+      - "172.18.0.1:8085:8080"
+      - "172.18.0.1:9093:8000"
+    environment:
+      API_TOKEN: "${VPNX_KR_TOKEN:-liam-vpnx-kr}"
+      SOCKS_USER: "${VPNX_SOCKS_USER:-vpnx}"
+      SOCKS_PASS: "${VPNX_SOCKS_PASS:-liam2026}"
+      CONNECT_COUNTRY: KR
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  vpnx-th:
+    container_name: vpnx-th
+    profiles: ["vpnx"]
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    ports:
+      - "172.18.0.1:1086:1080"
+      - "172.18.0.1:8086:8080"
+      - "172.18.0.1:9094:8000"
+    environment:
+      API_TOKEN: "${VPNX_TH_TOKEN:-liam-vpnx-th}"
+      SOCKS_USER: "${VPNX_SOCKS_USER:-vpnx}"
+      SOCKS_PASS: "${VPNX_SOCKS_PASS:-liam2026}"
+      CONNECT_COUNTRY: TH
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  vpnx-hk:
+    container_name: vpnx-hk
+    profiles: ["vpnx"]
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    ports:
+      - "172.18.0.1:1087:1080"
+      - "172.18.0.1:8087:8080"
+      - "172.18.0.1:9095:8000"
+    environment:
+      API_TOKEN: "${VPNX_HK_TOKEN:-liam-vpnx-hk}"
+      SOCKS_USER: "${VPNX_SOCKS_USER:-vpnx}"
+      SOCKS_PASS: "${VPNX_SOCKS_PASS:-liam2026}"
+      CONNECT_COUNTRY: HK
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
