@@ -213,6 +213,32 @@ sleeping ~$((wait_s / 3600))h until next day"
   if [[ "$this_n" -le 0 ]]; then
     continue
   fi
+  # Heal VPNX before batch — never start with dead proxies
+  export VPNX_UPDATE_ENV="$ROOT/.env"
+  export VPNX_KEEP_WARP=1
+  export VPNX_DIRECT_IPS="${VPNX_DIRECT_IPS:-103.150.61.32,103.253.245.148}"
+  if [[ -x "$ROOT/scripts/vpnx_watchdog.sh" ]]; then
+    log "vpnx_watchdog pre-batch heal"
+    set +e
+    bash "$ROOT/scripts/vpnx_watchdog.sh" --require 1 >>"$LOG" 2>&1
+    wd_rc=$?
+    set -e
+    # reload GROK_PROXY_POOL from .env (watchdog may rewrite healthy-only pool)
+    if [[ -f "$ROOT/.env" ]]; then
+      set +e
+      _pool_line="$(grep -E '^GROK_PROXY_POOL=' "$ROOT/.env" | tail -1 || true)"
+      set -e
+      if [[ -n "${_pool_line:-}" ]]; then
+        export "${_pool_line?}"
+        log "proxy_pool=${GROK_PROXY_POOL:-empty}"
+      fi
+    fi
+    if [[ "$wd_rc" -ne 0 ]]; then
+      log "vpnx_watchdog: no healthy proxy — sleep ${SLEEP_FAIL}s"
+      sleep "$SLEEP_FAIL"
+      continue
+    fi
+  fi
 
   export GROK_MAX_ACCOUNTS="$this_n"
   log "starting batch n=${this_n} c=${CONCURRENT} daily=${daily_now}/${DAILY_CAP}"
@@ -236,6 +262,21 @@ sleeping ~$((wait_s / 3600))h until next day"
 
   log "batch done rc=$rc created=$created failed=$failed dir=${latest:-none}"
 
+  # Heal dead tunnels only after every batch. Do NOT --rotate healthy free VPN Gate
+  # exits on success — rotation kills working sessions. Rotate only on fail streak.
+  if [[ -x "$ROOT/scripts/vpnx_watchdog.sh" ]]; then
+    export VPNX_UPDATE_ENV="$ROOT/.env"
+    export VPNX_KEEP_WARP=1
+    export VPNX_DIRECT_IPS="${VPNX_DIRECT_IPS:-103.150.61.32,103.253.245.148}"
+    if [[ "$created" -eq 0 ]]; then
+      bash "$ROOT/scripts/vpnx_watchdog.sh" --rotate --require 1 >>"$LOG" 2>&1 || true
+    else
+      bash "$ROOT/scripts/vpnx_watchdog.sh" --require 1 >>"$LOG" 2>&1 || true
+    fi
+  elif [[ -x "$ROOT/scripts/vpnx_rotate.sh" ]]; then
+    bash "$ROOT/scripts/vpnx_rotate.sh" >>"$LOG" 2>&1 || true
+  fi
+
   if [[ "$created" -gt 0 ]]; then
     fail_streak=0
     daily_now="$(add_daily_created "$created")"
@@ -250,8 +291,6 @@ auto-stop until next day"
       sleep "$wait_s"
       continue
     fi
-  # Rotate VPNX exit IP between batches for clean Japan IP per batch
-  bash "$ROOT/scripts/vpnx_rotate.sh" >>"$LOG" 2>&1 || true
     random_sleep_ok
   else
     fail_streak=$((fail_streak + 1))
@@ -261,7 +300,7 @@ auto-stop until next day"
     if [[ "$fail_streak" -ge "$MAX_FAIL_STREAK" ]]; then
       notify_msg "🚨 Farm LOOP cooldown
 ${fail_streak} batches with 0 success
-sleeping ${COOLDOWN_LONG}s — check IP / Turnstile
+sleeping ${COOLDOWN_LONG}s — check IP / Turnstile / VPNX
 latest=${latest:-none}"
       fail_streak=0
       sleep "$COOLDOWN_LONG"

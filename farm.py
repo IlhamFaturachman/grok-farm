@@ -2203,68 +2203,80 @@ async def wait_for_selector_any(page, selectors: list[str], timeout_ms: int = 15
     return None
 
 
-async def _castle_grpc_monitor(page, attempt: int):
-    """Attach request interceptor to log Castle token presence in gRPC calls.
+async def _castle_request_monitor(page, attempt: int):
+    """Prove Castle token presence via page.route (not page.on request).
 
-    x.ai's frontend calls Castle.createRequestToken() and embeds the result
-    as protobuf field 3 in the gRPC-Web CreateEmailValidationCode call.
-    This monitor verifies whether Camoufox generates a valid Castle token.
+    Camoufox/Firefox often skips page.on("request") for fetch/Server Actions.
+    page.route intercepts at network layer and can read POST bodies reliably.
+    Dumps a short sample to results when token found.
     """
-    async def _on_request(request):
-        url = request.url
-        if "CreateEmailValidationCode" not in url and "auth_mgmt" not in url.lower():
-            return
-        post = request.post_data_buffer
-        if not post or len(post) < 6:
-            return
-        # Parse gRPC-Web frame: skip 5-byte header (1 flag + 4 length)
-        payload = post[5:]
-        has_castle = False
-        castle_len = 0
-        email_val = ""
-        i = 0
-        while i < len(payload):
-            tag = payload[i]
-            field_num = tag >> 3
-            wire_type = tag & 0x07
-            i += 1
-            if wire_type != 2:
-                if wire_type == 0:  # varint
-                    while i < len(payload) and payload[i] & 0x80:
-                        i += 1
-                    i += 1
-                continue
-            # Read varint length
-            length = 0
-            shift = 0
-            while i < len(payload):
-                b = payload[i]
-                i += 1
-                length |= (b & 0x7F) << shift
-                if not (b & 0x80):
-                    break
-                shift += 7
-            if i + length > len(payload):
-                break
-            value = payload[i : i + length]
-            i += length
-            if field_num == 1:
-                email_val = value.decode("utf-8", errors="replace")
-            elif field_num == 3 and len(value) > 10:
-                has_castle = True
-                castle_len = len(value)
-        print(
-            f"[{attempt}] CASTLE gRPC: email={email_val} "
-            f"has_castle_token={has_castle} "
-            f"castle_token_len={castle_len}",
-            flush=True,
-        )
+    async def _handle_route(route):
+        req = route.request
+        try:
+            method = (req.method or "").upper()
+            url = req.url or ""
+            if method in ("POST", "PUT") and ("accounts.x.ai" in url or "x.ai" in url):
+                post = req.post_data or ""
+                headers = req.headers or {}
+                lower = post.lower()
+                next_action = (headers.get("next-action") or headers.get("Next-Action") or "").lower()
+                is_signup = (
+                    "castlerequesttoken" in lower
+                    or "castle_request_token" in lower
+                    or "createuserandsession" in lower
+                    or "emailvalidationcode" in lower
+                    or "turnstiletoken" in lower
+                    or bool(next_action)
+                    or "sign-up" in url
+                )
+                if is_signup and post:
+                    has_castle = "castlerequesttoken" in lower or "castle_request_token" in lower
+                    token_len = 0
+                    if has_castle:
+                        for key in ("castlerequesttoken", "castle_request_token"):
+                            if key not in lower:
+                                continue
+                            idx = lower.index(key)
+                            rest = post[idx:]
+                            # JSON "key":"value" or key=value
+                            for sep in ('":"', '": "', "='", '="', ":"):
+                                j = rest.find(sep)
+                                if j > 0:
+                                    val = rest[j + len(sep):]
+                                    if val.startswith('"'):
+                                        end_q = val.find('"', 1)
+                                        token_len = max(0, end_q - 1) if end_q > 0 else len(val[:200])
+                                    else:
+                                        token_len = len(val.split(",")[0].split("}")[0].strip()[:200])
+                                    break
+                    has_turnstile = "turnstiletoken" in lower
+                    print(
+                        f"[{attempt}] CASTLE req: method={method} "
+                        f"path={url.split('?')[0][-50:]} "
+                        f"has_castle={has_castle} castle_len={token_len} "
+                        f"has_turnstile={has_turnstile} next_action={bool(next_action)} "
+                        f"post_len={len(post)}",
+                        flush=True,
+                    )
+                    if has_castle and token_len > 0:
+                        try:
+                            dump = RESULTS_ROOT / f"castle_sample_{attempt}.txt"
+                            dump.write_text(
+                                f"url={url}\nlen={token_len}\npreview={post[:2000]}\n",
+                                encoding="utf-8",
+                            )
+                        except Exception:
+                            pass
+        except Exception as e:
+            print(f"[{attempt}] CASTLE monitor err: {e}", flush=True)
+        await route.continue_()
 
-    page.on("request", lambda req: asyncio.create_task(_on_request(req)))
+    # Broad match: Server Actions may POST to same-origin paths
+    await page.route("**/*", _handle_route)
 
 
 async def do_signup(page, email_addr: str, password: str, attempt: int) -> bool:
-    _castle_grpc_monitor(page, attempt)
+    await _castle_request_monitor(page, attempt)
     emit_progress(attempt, "signup_open", "Opening sign-up page", email_addr)
     try:
         await page.goto(SIGNUP_URL, wait_until="domcontentloaded", timeout=45000)

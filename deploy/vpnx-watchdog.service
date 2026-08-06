@@ -1,0 +1,17 @@
+[Unit]
+Description=VPNX multi-instance health watchdog (heal dead VPN Gate tunnels)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/grok-farm
+Environment=VPNX_UPDATE_ENV=/opt/grok-farm/.env
+Environment=VPNX_KEEP_WARP=1
+Environment=VPNX_DIRECT_IPS=103.150.61.32,103.253.245.148
+ExecStart=/opt/grok-farm/scripts/vpnx_watchdog.sh --require 1
+Nice=10
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target
