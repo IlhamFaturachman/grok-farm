@@ -2203,7 +2203,68 @@ async def wait_for_selector_any(page, selectors: list[str], timeout_ms: int = 15
     return None
 
 
+async def _castle_grpc_monitor(page, attempt: int):
+    """Attach request interceptor to log Castle token presence in gRPC calls.
+
+    x.ai's frontend calls Castle.createRequestToken() and embeds the result
+    as protobuf field 3 in the gRPC-Web CreateEmailValidationCode call.
+    This monitor verifies whether Camoufox generates a valid Castle token.
+    """
+    async def _on_request(request):
+        url = request.url
+        if "CreateEmailValidationCode" not in url and "auth_mgmt" not in url.lower():
+            return
+        post = request.post_data_buffer
+        if not post or len(post) < 6:
+            return
+        # Parse gRPC-Web frame: skip 5-byte header (1 flag + 4 length)
+        payload = post[5:]
+        has_castle = False
+        castle_len = 0
+        email_val = ""
+        i = 0
+        while i < len(payload):
+            tag = payload[i]
+            field_num = tag >> 3
+            wire_type = tag & 0x07
+            i += 1
+            if wire_type != 2:
+                if wire_type == 0:  # varint
+                    while i < len(payload) and payload[i] & 0x80:
+                        i += 1
+                    i += 1
+                continue
+            # Read varint length
+            length = 0
+            shift = 0
+            while i < len(payload):
+                b = payload[i]
+                i += 1
+                length |= (b & 0x7F) << shift
+                if not (b & 0x80):
+                    break
+                shift += 7
+            if i + length > len(payload):
+                break
+            value = payload[i : i + length]
+            i += length
+            if field_num == 1:
+                email_val = value.decode("utf-8", errors="replace")
+            elif field_num == 3 and len(value) > 10:
+                has_castle = True
+                castle_len = len(value)
+        print(
+            f"[{attempt}] CASTLE gRPC: email={email_val} "
+            f"has_castle_token={has_castle} "
+            f"castle_token_len={castle_len}",
+            flush=True,
+        )
+
+    page.on("request", lambda req: asyncio.create_task(_on_request(req)))
+
+
 async def do_signup(page, email_addr: str, password: str, attempt: int) -> bool:
+    _castle_grpc_monitor(page, attempt)
     emit_progress(attempt, "signup_open", "Opening sign-up page", email_addr)
     try:
         await page.goto(SIGNUP_URL, wait_until="domcontentloaded", timeout=45000)
