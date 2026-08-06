@@ -1,0 +1,8 @@
+[Unit]
+Description=WARP IP Rotator — cycle Cloudflare edge exit IP
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/grok-farm/scripts/warp_rotator.sh
+User=root
