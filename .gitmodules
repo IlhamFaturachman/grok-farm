@@ -1,0 +1,3 @@
+[submodule "vpnx-build"]
+	path = vpnx-build
+	url = https://github.com/waguriagentic/vpnx.git
