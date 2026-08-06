@@ -31,7 +31,14 @@ Grok farm uses 4 VPN Gate instances (JP/KR/TH/HK) + WARP for multi-IP multi-coun
 
 All built from `vpnx-build/` (submodule of `github.com/waguriagentic/vpnx`).
 
-**Patched**: `scripts/entrypoint.sh` line 24 — `socksmethod: none` (baked into image, not ephemeral).
+**Patched**:
+- `scripts/entrypoint.sh` line 24 — `socksmethod: none` (baked into image, not ephemeral)
+- `app/vpn.py` lines 71-73 — `int('-')` parser crash fix (`.lstrip('-').isdigit()` guard)
+- `app/vpn.py` line 278 — per-server connect timeout 30s→10s
+- `app/vpn.py` line 345 — candidates 5→8
+
+**Critical**: containers MUST run with `--cap-add=NET_ADMIN --device=/dev/net/tun`.
+Without `CAP_NET_ADMIN`, OpenVPN fails with `TUNSETIFF: Operation not permitted` and all connections time out.
 
 | Container  | Country | HTTP  | SOCKS5 | API  | API Token           |
 |------------|---------|-------|--------|------|---------------------|
@@ -39,6 +46,15 @@ All built from `vpnx-build/` (submodule of `github.com/waguriagentic/vpnx`).
 | vpnx-kr    | KR      | 8085  | 1085   | 9093 | liam-vpnx-kr        |
 | vpnx-th    | TH      | 8086  | 1086   | 9094 | liam-vpnx-th        |
 | vpnx-hk    | HK      | 8087  | 1087   | 9095 | liam-vpnx-hk        |
+
+**Verified exit IPs** (2026-08-06):
+| Proxy     | Exit IP         | Country  |
+|-----------|-----------------|----------|
+| WARP      | 104.28.163.28   | CF edge  |
+| VPNX JP   | 219.104.133.188 | Japan    |
+| VPNX KR   | 210.179.77.38   | Korea    |
+| VPNX TH   | 184.82.117.41   | Thailand |
+| VPNX HK   | 14.133.57.43    | HK       |
 
 **Credentials**: SOCKS user=`vpnx`, pass=`liam2026` (HTTP proxy auth only; SOCKS5 no-auth after bake).
 
@@ -53,14 +69,37 @@ docker build -t vpnx:latest .
 ### Recreate containers
 
 ```bash
-# JP
+# JP — MUST include --cap-add=NET_ADMIN --device=/dev/net/tun
 docker run -d --name vpnx --network bridge --restart unless-stopped \
+  --cap-add=NET_ADMIN --device=/dev/net/tun \
   -p 172.18.0.1:1081:1080 -p 172.18.0.1:8082:8080 -p 172.18.0.1:9090:8000 \
   -e SOCKS_USER=vpnx -e SOCKS_PASS=liam2026 -e API_TOKEN=liam-vpnx-secret \
+  -e CONNECT_COUNTRY=JP \
   vpnx:latest
 
-# KR/TH/HK: same but add -e CONNECT_COUNTRY=KR/TH/HK, different ports + tokens
-```
+# KR
+docker run -d --name vpnx-kr --network bridge --restart unless-stopped \
+  --cap-add=NET_ADMIN --device=/dev/net/tun \
+  -p 172.18.0.1:1085:1080 -p 172.18.0.1:8085:8080 -p 172.18.0.1:9093:8000 \
+  -e SOCKS_USER=vpnx -e SOCKS_PASS=liam2026 -e API_TOKEN=liam-vpnx-kr \
+  -e CONNECT_COUNTRY=KR \
+  vpnx:latest
+
+# TH
+docker run -d --name vpnx-th --network bridge --restart unless-stopped \
+  --cap-add=NET_ADMIN --device=/dev/net/tun \
+  -p 172.18.0.1:1086:1080 -p 172.18.0.1:8086:8080 -p 172.18.0.1:9094:8000 \
+  -e SOCKS_USER=vpnx -e SOCKS_PASS=liam2026 -e API_TOKEN=liam-vpnx-th \
+  -e CONNECT_COUNTRY=TH \
+  vpnx:latest
+
+# HK
+docker run -d --name vpnx-hk --network bridge --restart unless-stopped \
+  --cap-add=NET_ADMIN --device=/dev/net/tun \
+  -p 172.18.0.1:1087:1080 -p 172.18.0.1:8087:8080 -p 172.18.0.1:9095:8000 \
+  -e SOCKS_USER=vpnx -e SOCKS_PASS=liam2026 -e API_TOKEN=liam-vpnx-hk \
+  -e CONNECT_COUNTRY=HK \
+  vpnx:latest
 
 ## VPNX Watchdog
 
