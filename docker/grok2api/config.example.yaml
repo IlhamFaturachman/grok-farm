@@ -66,3 +66,67 @@ media:
   driver: local
   local:
     path: "./data/media"
+
+# ── v3.1.x additions (defaults match upstream; safe to leave as-is) ──
+
+# Multi-instance deployment. Single-instance keeps defaults.
+deployment:
+  # [default] keep 1 for single instance; scale-out requires PostgreSQL + Redis + shared media.
+  replicas: 1
+  # [required only if replicas>1] unique stable id per instance.
+  instanceID: ""
+  # [required only if replicas>1] same id across an instance group + shared media.
+  clusterID: "grok2api"
+  # [required only if replicas>1] confirm media.local.path is shared RW storage.
+  sharedMedia: false
+
+# Inference routing behavior.
+routing:
+  # [default] server-side reasoning replay cache: refills encrypted_content the client omitted on later turns.
+  reasoningReplayEnabled: true
+  reasoningReplayTTL: 1h
+  reasoningReplayMaxEntries: 10240
+  # [default] per-account upstream connection isolation; helps external L4/connection-hash LB but raises FD/TLS cost.
+  accountIsolatedConnections: false
+  # [default] large-pool segmented selection off; full-pool fallback + atomic concurrency gate preserved when on.
+  segmentedSelectorEnabled: false
+  segmentedSelectorMinCandidates: 3000
+  segmentedSelectorWindowSize: 64
+
+# Audit ledger. enforce will pause new inference after persistent ledger failure beyond grace.
+audit:
+  bufferSize: 16384
+  batchSize: 256
+  flushInterval: 250ms
+  commitDelay: 5ms
+  ledgerMode: enforce # observe | enforce
+  ledgerFailureThreshold: 1
+  ledgerUnhealthyGrace: 10s
+  ledgerQueueHighWatermarkPercent: 90
+
+# Optional Grok Build egress quality guard. Config alone does not start the sidecar;
+# enable with: docker compose --profile quality-guard up -d --build
+qualityGuard:
+  enabled: false
+  # The main program auto-creates and reuses an unexportable internal probe identity; no Client Key needed.
+  model: "grok-4.5"
+  mode: hybrid # passive | active | hybrid
+  activeInterval: 30m
+  passivePollInterval: 5s
+  # Token-speed guards: soft = early warning, hard = auto-quarantine the node.
+  softTPS: 500
+  hardTPS: 1000
+  consecutiveSoft: 2
+  consecutiveErrors: 2
+  quarantineDuration: 5m
+  noAccountBackoff: 5m
+  minimumHealthyNodes: 3
+  maxOutputTokens: 384
+  failClosed: false
+  minimumGenerationWindow: 1s
+  # Optional trusted IP-rotation webhook; fill rotatableNodeIDs alongside when enabled.
+  rotationURL: ""
+  rotationToken: ""
+  rotationTimeout: 45s
+  nodeIDs: []
+  rotatableNodeIDs: []

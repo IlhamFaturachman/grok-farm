@@ -27,9 +27,13 @@ services:
       - "127.0.0.1:8000:8000"
     environment:
       TZ: "${TZ:-UTC}"
+      # Override config.yaml PostgreSQL DSN when set; auto-enables postgres driver.
+      GROK2API_DATABASE_URL: "${GROK2API_DATABASE_URL:-}"
+      GROK2API_QUALITY_GUARD_DIR: /var/lib/grok2api-quality-guard
     volumes:
       - "${GROK2API_CONFIG:-./docker/grok2api/config.yaml}:/run/grok2api/config.yaml:ro"
       - grok2api-data:/app/data
+      - quality_guard_state:/var/lib/grok2api-quality-guard
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8000/healthz"]
       interval: 15s
@@ -61,18 +65,32 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  # Optional: Cloudflare WARP egress for cleaner exit IP (uncomment to enable).
-  # After start, add socks5://warp:1080 in grok2api admin → Settings → egress proxy.
-  # warp:
-  #   container_name: warp
-  #   image: caomingjun/warp:latest
-  #   restart: unless-stopped
-  #   ports:
-  #     - "127.0.0.1:1080:1080"
+  # Cloudflare WARP egress — exits via Cloudflare edge, NOT the VPS IP.
+  # After start: add socks5://warp:1080 in grok2api admin → Settings → egress proxy.
+  # Start with: docker compose --profile warp up -d
+  warp:
+    container_name: warp
+    image: caomingjun/warp:latest
+    profiles: ["warp"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1080:1080"
+    environment:
+      - WARP_SLEEP=2
+    cap_add:
+      - NET_ADMIN
+
+  # Optional: FlareSolverr clearance for Cloudflare-protected upstreams.
+  # Enable in admin → Settings → clearance mode = FlareSolverr, URL http://flaresolverr:8191.
+  # Start with: docker compose --profile flaresolverr up -d
+  # flaresolverr:
+  #   container_name: flaresolverr
+  #   image: ghcr.io/flaresolverr/flaresolverr:latest
+  #   profiles: ["flaresolverr"]
   #   environment:
-  #     - WARP_SLEEP=2
-  #   cap_add:
-  #     - NET_ADMIN
+  #     TZ: UTC
+  #     LOG_LEVEL: info
+  #   restart: unless-stopped
 
   # Optional one-shot importer: drops g2a_import.json from a mounted batch folder.
   # Usage:
@@ -118,3 +136,4 @@ services:
 
 volumes:
   grok2api-data:
+  quality_guard_state:
