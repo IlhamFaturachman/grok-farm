@@ -250,8 +250,8 @@ auto-stop until next day"
       sleep "$wait_s"
       continue
     fi
-  # Rotate WARP exit IP between batches for clean Japan IP per batch
-  bash "$ROOT/scripts/warp_rotate.sh" >>"$LOG" 2>&1 || true
+  # Rotate VPNX exit IP between batches for clean Japan IP per batch
+  bash "$ROOT/scripts/vpnx_rotate.sh" >>"$LOG" 2>&1 || true
     random_sleep_ok
   else
     fail_streak=$((fail_streak + 1))
