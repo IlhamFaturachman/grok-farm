@@ -145,10 +145,17 @@ random_sleep_ok() {
 }
 
 notify_msg() {
+  # Honor .env NOTIFY_ENABLED (default false). Never force-enable here —
+  # batch alerts and loop messages share the same kill switch.
+  local enabled="${NOTIFY_ENABLED:-false}"
+  case "${enabled,,}" in
+    1|true|yes|on) ;;
+    *) return 0 ;;
+  esac
   if [[ -x "$ROOT/.venv/bin/python" ]] || command -v python3 >/dev/null; then
     local py="${ROOT}/.venv/bin/python"
     [[ -x "$py" ]] || py=python3
-    NOTIFY_ENABLED=true "$py" - <<PY 2>/dev/null || true
+    "$py" - <<PY 2>/dev/null || true
 from notify import dispatch, public_ip
 text = """$*
 IP: """ + public_ip()
