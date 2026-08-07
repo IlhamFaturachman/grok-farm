@@ -349,6 +349,8 @@ class ProtocolOAuthClient:
         email: str = "",
         password: str = "",
         scopes: str = "openid profile email offline_access grok-cli:access api:access",
+        referrer: str = "grok-build",
+        plan: str = "generic",
     ) -> Dict[str, str]:
         """Full PKCE OAuth flow. Returns {code, verifier} for token exchange.
 
@@ -356,6 +358,15 @@ class ProtocolOAuthClient:
         if SSO-based cookie-setter fails (needs turnstile_token — caller must
         handle re-solving).
         """
+        # Prefer farm.py env defaults when available
+        try:
+            from farm import XAI_SCOPE, XAI_REFERRER, XAI_PLAN
+            if scopes.startswith("openid profile email offline_access grok-cli"):
+                scopes = XAI_SCOPE
+            referrer = referrer or XAI_REFERRER
+            plan = plan or XAI_PLAN
+        except Exception:
+            pass
         verifier, challenge = generate_pkce_pair()
         state = secrets.token_hex(16)
         nonce = secrets.token_hex(16)
@@ -371,8 +382,8 @@ class ProtocolOAuthClient:
                 "code_challenge_method": "S256",
                 "state": state,
                 "nonce": nonce,
-                "plan": "generic",
-                "referrer": "cli-proxy-api",
+                "plan": plan,
+                "referrer": referrer,
             })
         )
 

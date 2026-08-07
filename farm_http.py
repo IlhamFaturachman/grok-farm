@@ -31,6 +31,7 @@ from farm import (
     MAX_ACCOUNTS,
     OTP_TIMEOUT_S,
     PROXY_POOL,
+    REJECT_BFS,
     SPAWN_DELAY,
     _env,
     _env_bool,
@@ -257,6 +258,12 @@ async def _do_register_body_http(
         tokens = exchange_code_for_tokens(code, verifier)
         if not tokens.get("email"):
             tokens["email"] = email_addr
+        if tokens.get("bot_flagged") and REJECT_BFS:
+            reason = tokens.get("bot_flag_reason") or "bfs"
+            ref = tokens.get("referrer") or "?"
+            raise RuntimeError(
+                f"access JWT bot-flagged ({reason}, referrer={ref}) — drop (GROK_REJECT_BFS=1)"
+            )
 
         return {
             "email": email_addr,

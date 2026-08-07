@@ -172,6 +172,22 @@ def load_farm_accounts(path: Path) -> list[dict[str, Any]]:
     raise ValueError(f"unsupported accounts format in {p}")
 
 
+def _access_is_bot_flagged(access: str) -> bool:
+    if not access or access.count(".") < 2:
+        return False
+    try:
+        part = access.split(".")[1]
+        part += "=" * (-len(part) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(part.encode("ascii")))
+    except Exception:
+        return False
+    if claims.get("bfs") == 1 or claims.get("bfs") is True:
+        return True
+    if claims.get("bot_flag_source") == 1 or claims.get("bot_flag_source") is True:
+        return True
+    return False
+
+
 def convert_accounts(records: list[dict[str, Any]]) -> dict[str, Any]:
     """Return grok2api batch document {accounts: [...]}."""
     out: list[dict[str, Any]] = []
@@ -184,6 +200,10 @@ def convert_accounts(records: list[dict[str, Any]]) -> dict[str, Any]:
         if rec.get("provider") == "grok_build" and (
             rec.get("access_token") or rec.get("refresh_token")
         ):
+            access = str(rec.get("access_token") or "")
+            if rec.get("bot_flagged") is True or _access_is_bot_flagged(access):
+                skipped += 1
+                continue
             out.append(rec)
             continue
         entry = farm_record_to_g2a(rec)

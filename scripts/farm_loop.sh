@@ -33,7 +33,6 @@ if [[ -f "$ROOT/.env" ]]; then
   done <"$ROOT/.env"
 fi
 
-# Defaults (override via .env)
 BATCH_N="${FARM_LOOP_BATCH_N:-3}"
 CONCURRENT="${FARM_LOOP_CONCURRENT:-1}"
 SLEEP_OK="${FARM_LOOP_SLEEP_OK:-90}"
@@ -44,6 +43,9 @@ MAX_FAIL_STREAK="${FARM_LOOP_MAX_FAIL_STREAK:-5}"
 COOLDOWN_LONG="${FARM_LOOP_COOLDOWN_LONG:-1800}"
 DAILY_CAP="${FARM_LOOP_DAILY_CAP:-50}"
 DAY_TZ="${FARM_LOOP_DAY_TZ:-Asia/Jakarta}"
+# Adaptive: 2 consecutive batches majority-bfs → pause, canary 1, then resume
+BFS_STREAK_PAUSE="${FARM_LOOP_BFS_STREAK:-2}"
+BFS_PAUSE_SEC="${FARM_LOOP_BFS_PAUSE_SEC:-600}"
 
 # If only fixed SLEEP_OK set and min/max not customized, allow fixed via min=max=SLEEP_OK
 if [[ -n "${FARM_LOOP_SLEEP_OK:-}" && -z "${FARM_LOOP_SLEEP_OK_MIN:-}" && -z "${FARM_LOOP_SLEEP_OK_MAX:-}" ]]; then
@@ -66,6 +68,7 @@ LOG="$ROOT/results/farm_loop.log"
 STATE="$ROOT/results/farm_loop_state.json"
 DAILY_DIR="$ROOT/results"
 fail_streak=0
+bfs_streak=0
 
 log() {
   local ts
@@ -254,13 +257,26 @@ sleeping ~$((wait_s / 3600))h until next day"
   # Parse latest batch meta
   created=0
   failed=0
+  bfs_fails=0
   latest="$(ls -1dt "$ROOT"/results/batch_* 2>/dev/null | head -1 || true)"
   if [[ -n "$latest" && -f "$latest/batch_meta.json" ]]; then
     created="$(python3 -c "import json;print(json.load(open('$latest/batch_meta.json')).get('created',0))" 2>/dev/null || echo 0)"
     failed="$(python3 -c "import json;print(json.load(open('$latest/batch_meta.json')).get('failed',0))" 2>/dev/null || echo 0)"
   fi
+  if [[ -n "$latest" && -f "$latest/failed.json" ]]; then
+    bfs_fails="$(python3 -c "
+import json
+rows=json.load(open('$latest/failed.json'))
+n=0
+for r in rows if isinstance(rows,list) else []:
+    e=str((r or {}).get('error') or '')
+    if 'bot-flagged' in e or 'bfs=1' in e or 'bot_flag_source' in e:
+        n+=1
+print(n)
+" 2>/dev/null || echo 0)"
+  fi
 
-  log "batch done rc=$rc created=$created failed=$failed dir=${latest:-none}"
+  log "batch done rc=$rc created=$created failed=$failed bfs_fails=$bfs_fails dir=${latest:-none}"
 
   # Rotate ONE VPNX exit per batch (round-robin) + heal rest.
   # Full --rotate is 84s and drops 50% of free VPN Gate tunnels.
@@ -276,6 +292,57 @@ sleeping ~$((wait_s / 3600))h until next day"
     fi
   elif [[ -x "$ROOT/scripts/vpnx_rotate.sh" ]]; then
     bash "$ROOT/scripts/vpnx_rotate.sh" >>"$LOG" 2>&1 || true
+  fi
+
+  # Adaptive bfs: 2 consecutive batches with majority bfs drops → pause 10m, canary 1
+  total_attempts=$((created + failed))
+  if [[ "$total_attempts" -gt 0 && "$bfs_fails" -gt 0 && "$bfs_fails" -ge $(( (total_attempts + 1) / 2 )) ]]; then
+    bfs_streak=$((bfs_streak + 1))
+    log "bfs_streak=$bfs_streak (bfs_fails=$bfs_fails/${total_attempts})"
+  else
+    bfs_streak=0
+  fi
+  if [[ "$bfs_streak" -ge "$BFS_STREAK_PAUSE" ]]; then
+    log "BFS pause ${BFS_PAUSE_SEC}s after ${bfs_streak} majority-bfs batches — canary next"
+    notify_msg "⏸ Farm LOOP bfs pause
+${bfs_streak} batches majority bot-flagged (bfs)
+sleep ${BFS_PAUSE_SEC}s then canary n=1
+latest=${latest:-none}"
+    sleep "$BFS_PAUSE_SEC"
+    # canary: one account only
+    export GROK_MAX_ACCOUNTS=1
+    export GROK_CONCURRENT=1
+    log "bfs canary n=1 c=1"
+    set +e
+    if command -v xvfb-run >/dev/null 2>&1 && [[ -z "${DISPLAY:-}" ]]; then
+      xvfb-run -a python farm.py -n 1 -c 1 -y >>"$LOG" 2>&1
+    else
+      python farm.py -n 1 -c 1 -y >>"$LOG" 2>&1
+    fi
+    set -e
+    canary_created=0
+    canary_latest="$(ls -1dt "$ROOT"/results/batch_* 2>/dev/null | head -1 || true)"
+    if [[ -n "$canary_latest" && -f "$canary_latest/batch_meta.json" ]]; then
+      canary_created="$(python3 -c "import json;print(json.load(open('$canary_latest/batch_meta.json')).get('created',0))" 2>/dev/null || echo 0)"
+    fi
+    if [[ "$canary_created" -gt 0 ]]; then
+      log "bfs canary OK created=$canary_created — resume normal concurrent"
+      bfs_streak=0
+      fail_streak=0
+      daily_now="$(add_daily_created "$canary_created")"
+      write_state "ok" "$canary_created" 0 "$daily_now"
+      notify_msg "✅ Farm LOOP bfs canary clean
+created=$canary_created — resume batch=${BATCH_N} concurrent=${CONCURRENT}"
+      random_sleep_ok
+      continue
+    fi
+    log "bfs canary still flagged/fail — keep pause cycle"
+    notify_msg "🚨 Farm LOOP bfs canary still bad
+created=0 — another ${BFS_PAUSE_SEC}s pause
+check domain / Castle / VPNX exits"
+    # keep bfs_streak so next loop re-enters pause path after normal fail handling
+    sleep "$BFS_PAUSE_SEC"
+    continue
   fi
 
   if [[ "$created" -gt 0 ]]; then

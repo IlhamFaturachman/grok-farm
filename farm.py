@@ -163,6 +163,9 @@ XAI_SCOPE = _env(
 )
 XAI_REFERRER = _env("XAI_REFERRER", "grok-build") or "grok-build"
 XAI_PLAN = _env("XAI_PLAN", "generic") or "generic"
+# Headers aligned with official grok CLI 1.0.0 (xai-grok-cli / x-grok-client-version)
+XAI_CLIENT_VERSION = _env("XAI_CLIENT_VERSION", "1.0.0") or "1.0.0"
+XAI_UA = _env("XAI_USER_AGENT", f"xai-grok-cli/{XAI_CLIENT_VERSION}") or f"xai-grok-cli/{XAI_CLIENT_VERSION}"
 # If true, discard accounts whose access JWT has bfs/bot_flag_source (do not save/import)
 REJECT_BFS = _env_bool("GROK_REJECT_BFS", True)
 GROK_FREE_TOKEN_LIMIT = 1_000_000
@@ -1873,6 +1876,10 @@ def exchange_code_for_tokens(code: str, verifier: str) -> dict:
         headers={
             "Content-Type": "application/x-www-form-urlencoded",
             "Accept": "application/json",
+            "User-Agent": XAI_UA,
+            "X-XAI-Token-Auth": "xai-grok-cli",
+            "x-grok-client-version": XAI_CLIENT_VERSION,
+            "x-grok-client-surface": XAI_REFERRER,
         },
         method="POST",
     )
