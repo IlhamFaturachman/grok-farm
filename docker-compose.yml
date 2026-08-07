@@ -149,8 +149,9 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  vpnx-hk:
-    container_name: vpnx-hk
+  # VPNX JP2 — second Japan exit (VPN Gate rarely has usable HK).
+  vpnx-jp2:
+    container_name: vpnx-jp2
     profiles: ["vpnx"]
     cap_add:
       - NET_ADMIN
@@ -161,10 +162,10 @@ services:
       - "172.18.0.1:8087:8080"
       - "172.18.0.1:9095:8000"
     environment:
-      API_TOKEN: "${VPNX_HK_TOKEN:-liam-vpnx-hk}"
+      API_TOKEN: "${VPNX_JP2_TOKEN:-liam-vpnx-jp2}"
       SOCKS_USER: "${VPNX_SOCKS_USER:-vpnx}"
       SOCKS_PASS: "${VPNX_SOCKS_PASS:-liam2026}"
-      CONNECT_COUNTRY: HK
+      CONNECT_COUNTRY: JP
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true

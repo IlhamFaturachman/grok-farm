@@ -17,6 +17,7 @@ Env (also used by farm.py auto-import):
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import mimetypes
 import os
@@ -91,6 +92,21 @@ def farm_record_to_g2a(record: dict[str, Any]) -> dict[str, Any] | None:
     refresh = (tokens.get("refresh_token") or "").strip()
     if not access and not refresh:
         return None
+
+    # Drop bot-flagged JWTs (bfs=1 / bot_flag_source=1) — thinking dead on xAI.
+    if tokens.get("bot_flagged") is True or record.get("bot_flagged") is True:
+        return None
+    if access and access.count(".") >= 2:
+        try:
+            part = access.split(".")[1]
+            part += "=" * (-len(part) % 4)
+            claims = json.loads(base64.urlsafe_b64decode(part.encode("ascii")))
+            if claims.get("bfs") == 1 or claims.get("bfs") is True:
+                return None
+            if claims.get("bot_flag_source") == 1 or claims.get("bot_flag_source") is True:
+                return None
+        except Exception:
+            pass
 
     email = (
         (record.get("email") or tokens.get("email") or "").strip().lower()

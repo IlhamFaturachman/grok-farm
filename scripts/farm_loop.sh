@@ -262,8 +262,9 @@ sleeping ~$((wait_s / 3600))h until next day"
 
   log "batch done rc=$rc created=$created failed=$failed dir=${latest:-none}"
 
-  # Heal dead tunnels only after every batch. Do NOT --rotate healthy free VPN Gate
-  # exits on success — rotation kills working sessions. Rotate only on fail streak.
+  # Rotate ONE VPNX exit per batch (round-robin) + heal rest.
+  # Full --rotate is 84s and drops 50% of free VPN Gate tunnels.
+  # --rotate-one changes 1 IP per batch, keeps 3 tunnels alive.
   if [[ -x "$ROOT/scripts/vpnx_watchdog.sh" ]]; then
     export VPNX_UPDATE_ENV="$ROOT/.env"
     export VPNX_KEEP_WARP=1
@@ -271,7 +272,7 @@ sleeping ~$((wait_s / 3600))h until next day"
     if [[ "$created" -eq 0 ]]; then
       bash "$ROOT/scripts/vpnx_watchdog.sh" --rotate --require 1 >>"$LOG" 2>&1 || true
     else
-      bash "$ROOT/scripts/vpnx_watchdog.sh" --require 1 >>"$LOG" 2>&1 || true
+      bash "$ROOT/scripts/vpnx_watchdog.sh" --rotate-one --require 1 >>"$LOG" 2>&1 || true
     fi
   elif [[ -x "$ROOT/scripts/vpnx_rotate.sh" ]]; then
     bash "$ROOT/scripts/vpnx_rotate.sh" >>"$LOG" 2>&1 || true

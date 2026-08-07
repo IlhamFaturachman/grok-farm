@@ -145,15 +145,26 @@ GROK2API_AUTO_IMPORT = _env_bool("GROK2API_AUTO_IMPORT", False)
 SIGNUP_URL = "https://accounts.x.ai/sign-up"
 SIGNIN_URL = "https://accounts.x.ai/sign-in"
 
-# Grok CLI OIDC (same as official Grok CLI / poolprox3)
-XAI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
-XAI_AUTHORIZE = "https://auth.x.ai/oauth2/authorize"
-XAI_TOKEN = "https://auth.x.ai/oauth2/token"
-XAI_REDIRECT_URI = "http://127.0.0.1:56121/callback"
-XAI_SCOPE = (
+# Grok CLI OIDC (public client shared with official grok-build CLI)
+# Official grok CLI 1.0.0 authorize uses referrer=grok-build (not cli-proxy-api).
+# Access JWT may carry server bot flag: bfs=1 (legacy bot_flag_source=1) → drop.
+XAI_CLIENT_ID = _env("XAI_CLIENT_ID", "b1a00492-073a-47ea-816f-4c329264a828") or "b1a00492-073a-47ea-816f-4c329264a828"
+XAI_AUTHORIZE = _env("XAI_AUTHORIZE", "https://auth.x.ai/oauth2/authorize") or "https://auth.x.ai/oauth2/authorize"
+XAI_TOKEN = _env("XAI_TOKEN", "https://auth.x.ai/oauth2/token") or "https://auth.x.ai/oauth2/token"
+XAI_REDIRECT_URI = _env("XAI_REDIRECT_URI", "http://127.0.0.1:56121/callback") or "http://127.0.0.1:56121/callback"
+# Default keeps conversations:* for gateway chat; override via XAI_SCOPE if needed.
+# Official docs sample: openid profile email offline_access api:access
+XAI_SCOPE = _env(
+    "XAI_SCOPE",
+    "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write",
+) or (
     "openid profile email offline_access "
     "grok-cli:access api:access conversations:read conversations:write"
 )
+XAI_REFERRER = _env("XAI_REFERRER", "grok-build") or "grok-build"
+XAI_PLAN = _env("XAI_PLAN", "generic") or "generic"
+# If true, discard accounts whose access JWT has bfs/bot_flag_source (do not save/import)
+REJECT_BFS = _env_bool("GROK_REJECT_BFS", True)
 GROK_FREE_TOKEN_LIMIT = 1_000_000
 
 FIRST_NAMES = [
@@ -1822,6 +1833,30 @@ def extract_code_from_url(url: str) -> str | None:
     return vals[0] if vals else None
 
 
+def decode_access_jwt_claims(access_token: str) -> dict[str, Any] | None:
+    """Decode access JWT payload (no verify) — used for bfs / bot flag inspection."""
+    if not access_token or access_token.count(".") < 2:
+        return None
+    try:
+        part = access_token.split(".")[1]
+        part += "=" * (-len(part) % 4)
+        return json.loads(base64.urlsafe_b64decode(part.encode("ascii")))
+    except Exception:
+        return None
+
+
+def access_token_bot_flag(access_token: str) -> tuple[bool, str]:
+    """Return (flagged, reason). bfs=1 is current; bot_flag_source=1 is legacy."""
+    claims = decode_access_jwt_claims(access_token)
+    if not claims:
+        return False, "no_claims"
+    if claims.get("bfs") == 1 or claims.get("bfs") is True:
+        return True, "bfs=1"
+    if claims.get("bot_flag_source") == 1 or claims.get("bot_flag_source") is True:
+        return True, "bot_flag_source=1"
+    return False, "clean"
+
+
 def exchange_code_for_tokens(code: str, verifier: str) -> dict:
     form = urlencode(
         {
@@ -1860,6 +1895,8 @@ def exchange_code_for_tokens(code: str, verifier: str) -> dict:
             email = payload.get("email") or ""
         except Exception:
             pass
+    claims = decode_access_jwt_claims(access) or {}
+    flagged, flag_reason = access_token_bot_flag(access)
     tokens = {
         "access_token": access,
         "refresh_token": refresh,
@@ -1869,9 +1906,16 @@ def exchange_code_for_tokens(code: str, verifier: str) -> dict:
         "client_id": XAI_CLIENT_ID,
         "auth_mode": "oidc",
         "scope": data.get("scope") or XAI_SCOPE,
+        "referrer": claims.get("referrer") or XAI_REFERRER,
+        "bot_flagged": flagged,
+        "bot_flag_reason": flag_reason,
     }
     if id_token:
         tokens["id_token"] = id_token
+    if "bfs" in claims:
+        tokens["bfs"] = claims.get("bfs")
+    if "bot_flag_source" in claims:
+        tokens["bot_flag_source"] = claims.get("bot_flag_source")
     return tokens
 
 
@@ -2906,8 +2950,8 @@ async def obtain_oidc_tokens(page, email_addr: str, password: str, attempt: int)
         "code_challenge_method": "S256",
         "state": state,
         "nonce": nonce,
-        "plan": "generic",
-        "referrer": "cli-proxy-api",
+        "plan": XAI_PLAN,
+        "referrer": XAI_REFERRER,
     }
     auth_url = f"{XAI_AUTHORIZE}?{urlencode(params)}"
     auth_code: dict[str, str | None] = {"code": None}
@@ -3063,6 +3107,12 @@ async def _do_register_body(attempt_num: int, email_addr: str, password: str, pr
             print(f"[{attempt_num}] login branch warn: {e}", flush=True)
 
         tokens = await obtain_oidc_tokens(page, email_addr, password, attempt_num)
+        if tokens.get("bot_flagged") and REJECT_BFS:
+            reason = tokens.get("bot_flag_reason") or "bfs"
+            ref = tokens.get("referrer") or "?"
+            raise RuntimeError(
+                f"access JWT bot-flagged ({reason}, referrer={ref}) — drop (GROK_REJECT_BFS=1)"
+            )
         return {
             "email": email_addr,
             "password": password,
