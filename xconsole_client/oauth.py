@@ -23,6 +23,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import re
 import secrets
 from typing import Any, Dict, Optional
@@ -39,6 +40,13 @@ CREATE_COOKIE_SETTER_RPC = f"{ACCOUNTS_ORIGIN}/auth_mgmt.AuthManagement/CreateCo
 AUTHORIZE_URL = "https://auth.x.ai/oauth2/authorize"
 CONSENT_URL = f"{ACCOUNTS_ORIGIN}/oauth2/consent"
 
+# OAuth defaults (override via env — same knobs as farm.py, no import farm)
+DEFAULT_SCOPES = (
+    os.environ.get("XAI_SCOPE")
+    or "openid profile email offline_access grok-cli:access api:access"
+).strip()
+DEFAULT_REFERRER = (os.environ.get("XAI_REFERRER") or "grok-build").strip() or "grok-build"
+DEFAULT_PLAN = (os.environ.get("XAI_PLAN") or "generic").strip() or "generic"
 
 # ── Protobuf encoding ───────────────────────────────────────────────────────
 
@@ -348,9 +356,9 @@ class ProtocolOAuthClient:
         sso_token: str = "",
         email: str = "",
         password: str = "",
-        scopes: str = "openid profile email offline_access grok-cli:access api:access",
-        referrer: str = "grok-build",
-        plan: str = "generic",
+        scopes: str | None = None,
+        referrer: str | None = None,
+        plan: str | None = None,
     ) -> Dict[str, str]:
         """Full PKCE OAuth flow. Returns {code, verifier} for token exchange.
 
@@ -358,15 +366,9 @@ class ProtocolOAuthClient:
         if SSO-based cookie-setter fails (needs turnstile_token — caller must
         handle re-solving).
         """
-        # Prefer farm.py env defaults when available
-        try:
-            from farm import XAI_SCOPE, XAI_REFERRER, XAI_PLAN
-            if scopes.startswith("openid profile email offline_access grok-cli"):
-                scopes = XAI_SCOPE
-            referrer = referrer or XAI_REFERRER
-            plan = plan or XAI_PLAN
-        except Exception:
-            pass
+        scopes = (scopes or DEFAULT_SCOPES).strip() or DEFAULT_SCOPES
+        referrer = (referrer or DEFAULT_REFERRER).strip() or DEFAULT_REFERRER
+        plan = (plan or DEFAULT_PLAN).strip() or DEFAULT_PLAN
         verifier, challenge = generate_pkce_pair()
         state = secrets.token_hex(16)
         nonce = secrets.token_hex(16)
