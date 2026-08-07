@@ -20,6 +20,8 @@ import urllib.request
 import http.cookiejar
 import json
 import logging
+import random
+
 
 log = logging.getLogger("vpnx.vpn")
 
@@ -340,7 +342,7 @@ class VPNManager:
                 candidates = self.servers[:5]
         else:
             candidates = self.servers[:5]
-
+        random.shuffle(candidates)
         # Try up to 5 servers
         for server in candidates[:8]:
             if await self._try_connect(server):
@@ -370,6 +372,7 @@ class VPNManager:
                        if s["country"].upper() == country.upper()]
                       if country else self.servers)
         candidates = [s for s in candidates if s["hostname"] != old]
+        random.shuffle(candidates)
         for server in candidates[:10]:
             if await self._try_connect(server):
                 return {
