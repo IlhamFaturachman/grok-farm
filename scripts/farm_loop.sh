@@ -345,10 +345,29 @@ latest=${latest:-none}"
     bfs_streak=0
   fi
   if [[ "$bfs_streak" -ge "$BFS_STREAK_PAUSE" ]]; then
+    # Mixed batch can still have clean creates — credit before canary continue
+    if [[ "$created" -gt 0 ]]; then
+      fail_streak=0
+      daily_now="$(add_daily_created "$created")"
+      write_state "ok" "$created" "$failed" "$daily_now"
+      log "daily progress ${daily_now}/${DAILY_CAP} (credited before canary enter)"
+      if [[ "$daily_now" -ge "$DAILY_CAP" ]]; then
+        canary_mode=0
+        bfs_streak=0
+        wait_s="$(seconds_until_next_day)"
+        log "DAILY CAP hit on canary-enter batch — auto-stop ${wait_s}s"
+        notify_msg "✅ Farm LOOP daily cap reached
+${daily_now}/${DAILY_CAP} (${DAY_TZ})
+auto-stop until next day"
+        sleep "$wait_s"
+        continue
+      fi
+    fi
     canary_mode=1
     log "BFS enter canary_mode after ${bfs_streak} majority-bfs batches — pause ${BFS_PAUSE_SEC}s then n=1"
     notify_msg "⏸ Farm LOOP bfs pause → sticky canary
 ${bfs_streak} batches majority bot-flagged (bfs)
+created_this_batch=${created} credited
 sleep ${BFS_PAUSE_SEC}s then register 1 until clean
 latest=${latest:-none}"
     sleep "$BFS_PAUSE_SEC"
