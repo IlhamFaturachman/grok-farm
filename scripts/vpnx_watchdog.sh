@@ -253,7 +253,27 @@ for f in "$tmpdir"/r*; do
 done
 
 # Rewrite GROK_PROXY_POOL from healthy proxies only (+ optional WARP)
-if [[ -n "${VPNX_UPDATE_ENV:-}" && -f "${VPNX_UPDATE_ENV}" && "$healthy" -gt 0 ]]; then
+# FARM_WARP_ONLY / VPNX_SKIP_POOL_UPDATE: never touch .env pool (WARP-only mint path).
+# systemd vpnx-watchdog.timer often has no FARM_WARP_ONLY in process env — also read from
+# VPNX_UPDATE_ENV or default /opt/grok-farm/.env so the flag actually sticks.
+_env_file="${VPNX_UPDATE_ENV:-}"
+if [[ -z "$_env_file" || ! -f "$_env_file" ]]; then
+  for _cand in /opt/grok-farm/.env "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.env"; do
+    if [[ -f "$_cand" ]]; then _env_file="$_cand"; break; fi
+  done
+fi
+_skip_pool_raw="${FARM_WARP_ONLY:-${VPNX_SKIP_POOL_UPDATE:-}}"
+if [[ -z "$_skip_pool_raw" && -n "$_env_file" && -f "$_env_file" ]]; then
+  _skip_pool_raw="$(grep -E '^(FARM_WARP_ONLY|VPNX_SKIP_POOL_UPDATE)=' "$_env_file" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r' || true)"
+fi
+_skip_pool_raw="$(echo "${_skip_pool_raw:-0}" | tr '[:upper:]' '[:lower:]' | tr -d '\"'"'"' ')"
+_skip_pool=0
+case "$_skip_pool_raw" in
+  1|true|yes|on) _skip_pool=1 ;;
+esac
+if [[ "$_skip_pool" -eq 1 ]]; then
+  log "skip GROK_PROXY_POOL rewrite (FARM_WARP_ONLY/VPNX_SKIP_POOL_UPDATE from env/file)"
+elif [[ -n "${VPNX_UPDATE_ENV:-}" && -f "${VPNX_UPDATE_ENV}" && "$healthy" -gt 0 ]]; then
   pool=""
   for p in "${healthy_ports[@]}"; do
     entry="http://${PROXY_USER}:${PROXY_PASS}@${BRIDGE}:${p}"

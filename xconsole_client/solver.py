@@ -10,6 +10,7 @@ and CAPSOLVER_API_KEY is set.
 from __future__ import annotations
 
 import os
+import json
 import time
 from typing import Optional
 
@@ -43,8 +44,12 @@ class TurnstileSolver:
     ) -> Optional[str]:
         """Solve a Turnstile challenge and return the token, or None on failure.
 
-        Tries Boterdrop-Solver first, then CapSolver as fallback.
+        Order: waguri captcha-solver (POST /solve) → Boterdrop → CapSolver.
         """
+        token = self._solve_via_waguri(website_url, website_key, proxy=proxy)
+        if token:
+            return token
+
         token = self._solve_via_boterdrop(website_url, website_key, proxy=proxy)
         if token:
             return token
@@ -55,6 +60,60 @@ class TurnstileSolver:
                 return token
 
         return None
+
+    def _solve_via_waguri(
+        self,
+        website_url: str,
+        website_key: str,
+        *,
+        proxy: str = "",
+    ) -> Optional[str]:
+        """waguriagentic/captcha-solver: POST /solve {type,sitekey,url} → {solved,token}."""
+        if not self.solver_url:
+            return None
+        try:
+            body: dict = {
+                "type": "turnstile",
+                "sitekey": website_key,
+                "url": website_url,
+                "timeout_s": min(self.max_wait, 90),
+            }
+            if proxy:
+                body["proxy"] = proxy
+            headers = {"Content-Type": "application/json", "Accept": "application/json"}
+            resp = requests.post(
+                f"{self.solver_url}/solve",
+                json=body,
+                headers=headers,
+                timeout=self.max_wait + 15,
+            )
+            if resp.status_code == 404:
+                if self.debug:
+                    print(f"  [solver] waguri 404 — endpoint not available", flush=True)
+                return None
+            if resp.status_code not in (200, 202):
+                if self.debug:
+                    print(f"  [solver] waguri HTTP {resp.status_code}: {resp.text[:120]}", flush=True)
+                return None
+            data = resp.json() if resp.content else {}
+            if isinstance(data, dict) and data.get("solved") is False:
+                if self.debug:
+                    print(f"  [solver] waguri unsolved: {data.get('error') or data}", flush=True)
+                return None
+            token = (
+                (data.get("token") if isinstance(data, dict) else None)
+                or (data.get("value") if isinstance(data, dict) else None)
+                or ""
+            )
+            if token:
+                if self.debug:
+                    print(f"  [solver] waguri token len={len(token)} method={data.get('method')}", flush=True)
+                return str(token)
+            return None
+        except Exception as e:
+            if self.debug:
+                print(f"  [solver] waguri error: {str(e)[:100]}", flush=True)
+            return None
 
     def _solve_via_boterdrop(
         self,

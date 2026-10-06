@@ -70,6 +70,9 @@ class SignupResult:
 
 # ── Client ──────────────────────────────────────────────────────────────────
 
+def _env(key: str, default: str = "") -> str:
+    return os.environ.get(key, default) or default
+
 class XConsoleAuthClient:
     """HTTP-only x.ai account registration client."""
 
@@ -233,7 +236,11 @@ class XConsoleAuthClient:
                 print(f"  [cf_clearance] Error: {str(e)[:80]}")
 
     def load_signup_page(self) -> int:
-        """GET the signup page and scrape next-action ID + Turnstile sitekey."""
+        """GET the signup page and scrape next-action ID + Turnstile sitekey.
+        
+        If status is 403 (Cloudflare block), try harvesting cf_clearance via
+        the local captcha-solver service and retry.
+        """
         h = self._base_headers()
         h.update({
             "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -243,6 +250,46 @@ class XConsoleAuthClient:
             "referer": "https://console.x.ai/",
         })
         resp = self._s.get(self.signup_url, headers=h, timeout=self.timeout)
+        
+        # If Cloudflare blocks (403), harvest cf_clearance via solver
+        if resp.status_code == 403:
+            import urllib.request as _urllib
+            solver_url = _env("SOLVER_URL", "http://127.0.0.1:8877")
+            try:
+                solver_body = json.dumps({
+                    "type": "cloudflare",
+                    "url": self.signup_url,
+                    "timeout_s": 90,
+                }).encode()
+                solver_req = _urllib.Request(
+                    f"{solver_url}/solve",
+                    data=solver_body,
+                    headers={"Content-Type": "application/json"},
+                )
+                with _urllib.urlopen(solver_req, timeout=120) as sresp:
+                    sresult = json.loads(sresp.read())
+                if sresult.get("success") and sresult.get("cf_clearance"):
+                    cf_val = sresult["cf_clearance"]["value"]
+                    solver_ua = sresult.get("user_agent", "")
+                    # Inject cf_clearance + all cookies into session
+                    for ck in sresult.get("cookies", []):
+                        self._s.cookies.set(ck["name"], ck["value"], domain=ck.get("domain",".x.ai"))
+                    if solver_ua:
+                        self._base_headers_static["User-Agent"] = solver_ua
+                    print(f"  [cf_clearance] Harvested, retrying signup page...", flush=True)
+                    # Retry with cookies
+                    h2 = self._base_headers()
+                    h2.update({
+                        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        "sec-fetch-site": "cross-site",
+                        "sec-fetch-mode": "navigate",
+                        "sec-fetch-dest": "document",
+                        "referer": "https://console.x.ai/",
+                    })
+                    resp = self._s.get(self.signup_url, headers=h2, timeout=self.timeout)
+            except Exception as e:
+                print(f"  [cf_clearance] Solver error: {str(e)[:100]}", flush=True)
+        
         html = resp.text
 
         # Scrape Next.js build-specific values
@@ -325,7 +372,7 @@ class XConsoleAuthClient:
         contains createUserAndSessionRequest — bare 42-char hex scans can pick
         the wrong id under concurrent deploys.
         """
-        js_urls = list(set(re.findall(r'src="(/_next/static/chunks/[^"]+\.js)"', html)))
+        js_urls = list(set(re.findall(r'src="(/_next/static/chunks/[^"]+\.js(?:\?[^"]*)?)"', html)))
 
         def _fetch_and_search(path: str) -> Tuple[Optional[str], int]:
             """Return (action_id, priority). Higher priority wins."""
@@ -362,7 +409,7 @@ class XConsoleAuthClient:
 
             # Last resort: any 42-char hex in a signup-related chunk
             if is_signup:
-                hashes = re.findall(r'"([a-f0-9]{42})"', text)
+                hashes = re.findall(r'"([a-f0-9]{40,44})"', text)
                 if hashes:
                     return (hashes[0], 10)
             return (None, 0)

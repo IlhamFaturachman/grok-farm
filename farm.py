@@ -65,6 +65,10 @@ except ImportError:
 def _env(key: str, default: str = "") -> str:
     return (os.environ.get(key) or default).strip()
 
+def human_delay(min_s: float = 0.5, max_s: float = 2.0) -> float:
+    """Random human-like delay between actions."""
+    return random.uniform(min_s, max_s)
+
 def _env_bool(key: str, default: bool = True) -> bool:
     raw = _env(key, "true" if default else "false").lower()
     return raw in ("1", "true", "yes", "on")
@@ -87,13 +91,19 @@ if not EMAIL_DOMAINS and EMAIL_DOMAIN:
 if EMAIL_DOMAINS and not EMAIL_DOMAIN:
     EMAIL_DOMAIN = EMAIL_DOMAINS[0]
 EMAIL_MODE = _env("GROK_EMAIL_MODE", "domain").lower()
-if EMAIL_MODE not in ("plus_trick", "domain"):
+if EMAIL_MODE not in ("plus_trick", "domain", "mail_tm", "guerrillamail", "1secmail"):
     EMAIL_MODE = "domain"
 GMAIL_BASE = _env("GROK_GMAIL_BASE").lower() or IMAP_USER.lower()
 ACCOUNT_PASSWORD = _env("GROK_PASSWORD", "$ExamplePass1")
+# Per-account password by default — shared GROK_PASSWORD is a free graph signal for Castle/xAI.
+# Set GROK_PASSWORD_RANDOM=0 to force the single ACCOUNT_PASSWORD for every mint.
+PASSWORD_RANDOM = _env_bool("GROK_PASSWORD_RANDOM", True)
+PASSWORD_LEN = max(12, min(32, int(_env("GROK_PASSWORD_LEN", "18") or "18")))
 MAX_ACCOUNTS = int(_env("GROK_MAX_ACCOUNTS", "5") or "5")
 CONCURRENT = int(_env("GROK_CONCURRENT", "1") or "1")
 HEADLESS = _env_bool("GROK_HEADLESS", False)  # headed recommended for Turnstile
+# Virtual display mode: launch Xvfb internally (no external xvfb-run needed)
+VIRTUAL_DISPLAY = _env_bool("GROK_VIRTUAL_DISPLAY", False)
 SPAWN_DELAY = float(_env("GROK_SPAWN_DELAY", "2") or "2")
 
 # Fail-fast timeouts (stuck / unclear page states should free the worker slot)
@@ -142,6 +152,250 @@ GROK2API_EXPORT = _env_bool(
 )
 GROK2API_AUTO_IMPORT = _env_bool("GROK2API_AUTO_IMPORT", False)
 
+
+# ── Mail.tm provider ─────────────────────────────────────────────────────────
+import urllib.request as _urllib_request
+_MAIL_TM_API = "https://api.mail.tm"
+_MAIL_TM_DOMAINS: list[str] = []
+_MAIL_TM_DOMAINS_AT = 0.0
+
+def _mail_tm_fetch_domains() -> list[str]:
+    global _MAIL_TM_DOMAINS, _MAIL_TM_DOMAINS_AT
+    import time as _time
+    now = _time.time()
+    if _MAIL_TM_DOMAINS and (now - _MAIL_TM_DOMAINS_AT) < 3600:
+        return _MAIL_TM_DOMAINS
+    try:
+        req = _urllib_request.Request(f"{_MAIL_TM_API}/domains", headers={"Accept": "application/json"})
+        with _urllib_request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if isinstance(data, list):
+            _MAIL_TM_DOMAINS = [d["domain"] for d in data if d.get("isActive")]
+        elif isinstance(data, dict):
+            _MAIL_TM_DOMAINS = [d["domain"] for d in data.get("hydra:member", []) if d.get("isActive")]
+        _MAIL_TM_DOMAINS_AT = now
+    except Exception as e:
+        print(f"[mail.tm] domain fetch failed: {e}", flush=True)
+    return _MAIL_TM_DOMAINS
+
+def _mail_tm_create_account() -> dict | None:
+    """Create a mail.tm mailbox and return {email, password, token}."""
+    domains = _mail_tm_fetch_domains()
+    if not domains:
+        return None
+    local = "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(10))
+    email = f"{local}@{domains[0]}"
+    password = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(16))
+    try:
+        req = _urllib_request.Request(
+            f"{_MAIL_TM_API}/accounts",
+            data=json.dumps({"address": email, "password": password}).encode(),
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        with _urllib_request.urlopen(req, timeout=10) as resp:
+            if resp.status not in (200, 201):
+                return None
+    except Exception as e:
+        print(f"[mail.tm] create error: {e}", flush=True)
+        return None
+    try:
+        req2 = _urllib_request.Request(
+            f"{_MAIL_TM_API}/token",
+            data=json.dumps({"address": email, "password": password}).encode(),
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        with _urllib_request.urlopen(req2, timeout=10) as resp2:
+            token = json.loads(resp2.read().decode()).get("token", "")
+    except Exception as e:
+        print(f"[mail.tm] token error: {e}", flush=True)
+        return None
+    if not token:
+        return None
+    return {"email": email, "password": password, "token": token}
+
+def _mail_tm_read_otp(token: str, timeout: int = 180) -> str | None:
+    """Poll mail.tm inbox for xAI confirmation code."""
+    import time as _time
+    code_re = re.compile(r"\b([A-Z0-9]{3}-[A-Z0-9]{3})\b")
+    deadline = _time.time() + timeout
+    seen: set[str] = set()
+    while _time.time() < deadline:
+        try:
+            req = _urllib_request.Request(
+                f"{_MAIL_TM_API}/messages?page=1",
+                headers={"Accept": "application/json", "Authorization": f"Bearer {token}"},
+            )
+            with _urllib_request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            messages = data if isinstance(data, list) else data.get("hydra:member", [])
+            for msg in messages:
+                mid = str(msg.get("id", ""))
+                if not mid or mid in seen:
+                    continue
+                seen.add(mid)
+                subject = msg.get("subject", "")
+                m = code_re.search(subject)
+                if m:
+                    code = m.group(1).upper()
+                    left, right = code.split("-", 1)
+                    if not (re.fullmatch(r"[A-Z]+", left) and re.fullmatch(r"\d+", right)):
+                        return code
+                # Read full message
+                try:
+                    req2 = _urllib_request.Request(
+                        f"{_MAIL_TM_API}/messages/{mid}",
+                        headers={"Accept": "application/json", "Authorization": f"Bearer {token}"},
+                    )
+                    with _urllib_request.urlopen(req2, timeout=10) as resp2:
+                        full = json.loads(resp2.read().decode("utf-8"))
+                    text = full.get("text", "") or full.get("html", "") or ""
+                    if isinstance(text, list):
+                        text = " ".join(str(t) for t in text)
+                    m2 = code_re.search(text)
+                    if m2:
+                        code = m2.group(1).upper()
+                        left, right = code.split("-", 1)
+                        if not (re.fullmatch(r"[A-Z]+", left) and re.fullmatch(r"\d+", right)):
+                            return code
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        _time.sleep(3.0)
+    return None
+
+# Store mail.tm tokens for later OTP reading
+_MAIL_TM_TOKENS: dict[str, str] = {}
+
+# ── GuerrillaMail provider ──────────────────────────────────────────────────
+_GUERRILLA_API = "https://api.guerrillamail.com/ajax.php"
+
+def _guerrilla_create_account() -> dict | None:
+    """Create a guerrillamail temp address."""
+    try:
+        req = _urllib_request.Request(
+            f"{_GUERRILLA_API}?f=getemailaddress&lang=en",
+            headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"},
+        )
+        with _urllib_request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        email = data.get("email_addr", "")
+        sid = data.get("sid_token", "")
+        if not email or not sid:
+            return None
+        return {"email": email, "password": sid, "token": sid}
+    except Exception as e:
+        print(f"[guerrillamail] create failed: {e}", flush=True)
+        return None
+
+def _guerrilla_read_otp(sid: str, timeout: int = 180) -> str | None:
+    """Poll guerrillamail inbox for xAI confirmation code."""
+    import time as _time
+    code_re = re.compile(r"\b([A-Z0-9]{3}-[A-Z0-9]{3})\b")
+    deadline = _time.time() + timeout
+    seen: set[str] = set()
+    while _time.time() < deadline:
+        try:
+            req = _urllib_request.Request(
+                f"{_GUERRILLA_API}?f=get_email_list&offset=0&sid_token={sid}",
+                headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"},
+            )
+            with _urllib_request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            for msg in data.get("list", []):
+                mid = str(msg.get("mail_id", ""))
+                if not mid or mid in seen:
+                    continue
+                seen.add(mid)
+                subject = msg.get("mail_subject", "")
+                m = code_re.search(subject)
+                if m:
+                    code = m.group(1).upper()
+                    left, right = code.split("-", 1)
+                    if not (re.fullmatch(r"[A-Z]+", left) and re.fullmatch(r"\d+", right)):
+                        return code
+                try:
+                    req2 = _urllib_request.Request(
+                        f"{_GUERRILLA_API}?f=fetch_email&email_id={mid}&sid_token={sid}",
+                        headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"},
+                    )
+                    with _urllib_request.urlopen(req2, timeout=10) as resp2:
+                        full = json.loads(resp2.read().decode("utf-8"))
+                    body = full.get("mail_body", "")
+                    m2 = code_re.search(body)
+                    if m2:
+                        code = m2.group(1).upper()
+                        left, right = code.split("-", 1)
+                        if not (re.fullmatch(r"[A-Z]+", left) and re.fullmatch(r"\d+", right)):
+                            return code
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        _time.sleep(3.0)
+    return None
+
+# ── 1secmail provider ───────────────────────────────────────────────────────
+_1SECMAIL_API = "https://www.1secmail.com/api/v1/"
+_1SECMAIL_DOMAINS = ["1secmail.com", "1secmail.net", "1secmail.org", "wwjmp.com",
+                     "esiix.com", "xojxe.com", "yoggm.com"]
+
+def _1secmail_create_account() -> dict | None:
+    """Create a 1secmail temp address (no account creation needed)."""
+    local = "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(10))
+    domain = random.choice(_1SECMAIL_DOMAINS)
+    email = f"{local}@{domain}"
+    return {"email": email, "password": "", "token": f"{local}@{domain}"}
+
+def _1secmail_read_otp(token: str, timeout: int = 180) -> str | None:
+    """Poll 1secmail inbox for xAI confirmation code."""
+    import time as _time
+    code_re = re.compile(r"\b([A-Z0-9]{3}-[A-Z0-9]{3})\b")
+    login, domain = token.split("@", 1) if "@" in token else (token, "")
+    deadline = _time.time() + timeout
+    seen: set[str] = set()
+    while _time.time() < deadline:
+        try:
+            url = f"{_1SECMAIL_API}?action=getMessages&login={login}&domain={domain}"
+            req = _urllib_request.Request(url, headers={"Accept": "application/json"})
+            with _urllib_request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            for msg in data:
+                mid = str(msg.get("id", ""))
+                if not mid or mid in seen:
+                    continue
+                seen.add(mid)
+                subject = msg.get("subject", "")
+                m = code_re.search(subject)
+                if m:
+                    code = m.group(1).upper()
+                    left, right = code.split("-", 1)
+                    if not (re.fullmatch(r"[A-Z]+", left) and re.fullmatch(r"\d+", right)):
+                        return code
+                try:
+                    url2 = f"{_1SECMAIL_API}?action=readMessage&login={login}&domain={domain}&id={mid}"
+                    req2 = _urllib_request.Request(url2, headers={"Accept": "application/json"})
+                    with _urllib_request.urlopen(req2, timeout=10) as resp2:
+                        full = json.loads(resp2.read().decode("utf-8"))
+                    body = full.get("body", "") or full.get("textBody", "")
+                    m2 = code_re.search(body)
+                    if m2:
+                        code = m2.group(1).upper()
+                        left, right = code.split("-", 1)
+                        if not (re.fullmatch(r"[A-Z]+", left) and re.fullmatch(r"\d+", right)):
+                            return code
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        _time.sleep(3.0)
+    return None
+
+# Store temp mail tokens for OTP reading (all providers)
+_TEMP_MAIL_TOKENS: dict[str, dict] = {}  # email → {token, provider}
+
 SIGNUP_URL = "https://accounts.x.ai/sign-up"
 SIGNIN_URL = "https://accounts.x.ai/sign-in"
 
@@ -163,6 +417,8 @@ XAI_SCOPE = _env(
 )
 XAI_REFERRER = _env("XAI_REFERRER", "grok-build") or "grok-build"
 XAI_PLAN = _env("XAI_PLAN", "generic") or "generic"
+# New consent token (Aug 2026) — enables image/video quota on console.x.ai
+XAI_CONSENT = _env("XAI_CONSENT", "40760f3d0690e098d0e4ba2a238a675fa4191c3d6c") or "40760f3d0690e098d0e4ba2a238a675fa4191c3d6c"
 # Headers aligned with official grok CLI 1.0.0 (xai-grok-cli / x-grok-client-version)
 XAI_CLIENT_VERSION = _env("XAI_CLIENT_VERSION", "1.0.0") or "1.0.0"
 XAI_UA = _env("XAI_USER_AGENT", f"xai-grok-cli/{XAI_CLIENT_VERSION}") or f"xai-grok-cli/{XAI_CLIENT_VERSION}"
@@ -646,6 +902,31 @@ def _crypto_local_part(length: int) -> str:
     return "".join(secrets.choice(_ALPHANUM) for _ in range(length))
 
 
+def generate_account_password(length: int | None = None) -> str:
+    """Unique password per mint. Meets typical upper/lower/digit/symbol rules."""
+    n = int(length or PASSWORD_LEN)
+    n = max(12, min(32, n))
+    lower = string.ascii_lowercase
+    upper = string.ascii_uppercase
+    digits = string.digits
+    # Avoid shell/URL-hostile chars in logs and basic-auth adjacent configs.
+    symbols = "!@#$%^&*_-+=?"
+    # Guarantee one of each class, then fill from the full alphabet.
+    chars = [
+        secrets.choice(lower),
+        secrets.choice(upper),
+        secrets.choice(digits),
+        secrets.choice(symbols),
+    ]
+    alphabet = lower + upper + digits + symbols
+    chars.extend(secrets.choice(alphabet) for _ in range(n - 4))
+    # Fisher–Yates via secrets
+    for i in range(len(chars) - 1, 0, -1):
+        j = secrets.randbelow(i + 1)
+        chars[i], chars[j] = chars[j], chars[i]
+    return "".join(chars)
+
+
 def _emails_from_accounts_json(path: Path) -> set[str]:
     out: set[str] = set()
     if not path.is_file():
@@ -756,6 +1037,21 @@ async def generate_email() -> str:
     """Crypto-random unique email; reserved in global set + used_emails.txt."""
     async with _emails_lock:
         for _ in range(200):
+            if EMAIL_MODE in ("mail_tm", "guerrillamail", "1secmail"):
+                if EMAIL_MODE == "mail_tm":
+                    acct = _mail_tm_create_account()
+                elif EMAIL_MODE == "guerrillamail":
+                    acct = _guerrilla_create_account()
+                else:
+                    acct = _1secmail_create_account()
+                if not acct:
+                    raise RuntimeError(f"{EMAIL_MODE} account creation failed")
+                _TEMP_MAIL_TOKENS[acct["email"].lower()] = {
+                    "token": acct["token"],
+                    "provider": EMAIL_MODE,
+                }
+                _MAIL_TM_TOKENS[acct["email"].lower()] = acct["token"]
+                return acct["email"]
             if EMAIL_MODE == "domain":
                 if not EMAIL_DOMAINS:
                     raise RuntimeError(
@@ -846,6 +1142,20 @@ def _extract_xai_code(subject: str, body: str) -> str | None:
 
 
 def read_otp_from_imap_sync(target_email: str, timeout: int = 180, since_ts: float | None = None) -> str | None:
+    # Temp mail OTP reading — bypass IMAP entirely
+    if EMAIL_MODE in ("mail_tm", "guerrillamail", "1secmail"):
+        info = _TEMP_MAIL_TOKENS.get(target_email.lower(), {})
+        token = info.get("token", _MAIL_TM_TOKENS.get(target_email.lower(), ""))
+        provider = info.get("provider", EMAIL_MODE)
+        if not token:
+            print(f"[{provider}] No token for {target_email}", flush=True)
+            return None
+        if provider == "mail_tm":
+            return _mail_tm_read_otp(token, timeout=timeout)
+        elif provider == "guerrillamail":
+            return _guerrilla_read_otp(token, timeout=timeout)
+        elif provider == "1secmail":
+            return _1secmail_read_otp(token, timeout=timeout)
     """Poll Gmail IMAP for xAI confirmation code addressed to target_email.
 
     Codes arrive from noreply@x.ai with subject like "K35-1QR xAI confirmation code".
@@ -1141,13 +1451,49 @@ def _parse_vision_clicks(text: str) -> list[tuple[float, float]] | None:
 async def launch_browser(proxy_url: str | None):
     if not _CAMOUFOX_AVAILABLE:
         raise RuntimeError("camoufox not installed. Run: ./install.sh")
+
+    # ── Anti-BFS: maximum fingerprint randomization ──
+    # Every account gets a UNIQUE fingerprint so Castle.io cannot cluster them.
+    use_geoip = _env_bool("GROK_GEOIP", True) if proxy_url else _env_bool("GROK_GEOIP", False)
+
+    # Random OS — but weight towards Windows (most common)
+    os_choice = random.choices(
+        ["windows", "macos", "linux"],
+        weights=[70, 20, 10],
+        k=1,
+    )[0]
+
+    # Random screen resolution from common real-world sizes
+    # Camoufox 0.5.x expects Screen objects, not dicts
+    try:
+        from browserforge.fingerprints import Screen
+        screen_choices = [
+            Screen(max_width=1920, max_height=1080),
+            Screen(max_width=1366, max_height=768),
+            Screen(max_width=1536, max_height=864),
+            Screen(max_width=1440, max_height=900),
+            Screen(max_width=2560, max_height=1440),
+            Screen(max_width=1280, max_height=720),
+        ]
+    except ImportError:
+        screen_choices = None
+
     kwargs: dict[str, Any] = {
-        "headless": HEADLESS,
-        "humanize": 0.5,
-        "os": random.choice(["windows", "macos", "linux"]),
+        "headless": "virtual" if VIRTUAL_DISPLAY else HEADLESS,
+        # Higher humanize = more natural mouse/keyboard timing
+        "humanize": float(_env("GROK_HUMANIZE", "0.9") or "0.9"),
+        # Random OS per account
+        "os": os_choice,
+        # Force English locale — selectors match English button text
         "locale": "en-US",
-        "geoip": _env_bool("GROK_GEOIP", False),
+        # geoip handles timezone/screen/WebGL to match proxy IP
+        "geoip": use_geoip,
         "block_webrtc": True,
+        # Random screen size per account (if available)
+        **({"screen": random.choice(screen_choices)} if screen_choices else {}),
+        # Do NOT spoof ff_version — Camoufox warns it causes detection
+        # Random fonts subset — prevents font fingerprint clustering
+        "custom_fonts_only": False,
     }
     if proxy_url:
         kwargs["proxy"] = _parse_proxy(proxy_url)
@@ -2342,27 +2688,64 @@ async def do_signup(page, email_addr: str, password: str, attempt: int) -> bool:
     emit_progress(attempt, "signup_email_btn", "Selecting Sign up with email", email_addr)
     clicked = await click_text_button(
         page,
-        ["Sign up with email", "Sign up with Email"],
-        exclude=["Google", "Apple", "Microsoft", " with X"],
+        ["Sign up with email", "Sign up with Email", "メールで登録", "メールで登録する"],
+        exclude=["Google", "Apple", "Microsoft", " with X", "X で登録"],
     )
     if not clicked:
-        # Fallback: exact text via locator
+        # Fallback 1: regex match any locale
         try:
-            await page.get_by_role("button", name=re.compile(r"sign up with email", re.I)).click(timeout=5000)
-            clicked = "Sign up with email"
+            await page.get_by_role("button", name=re.compile(r"sign up with email|メールで登録|email", re.I)).click(timeout=5000)
+            clicked = "Sign up with email (regex)"
         except Exception:
+            pass
+    if not clicked:
+        # Fallback 2: click the second auth button (first is usually X/Google, second is email)
+        try:
+            btns = await page.query_selector_all("button")
+            for btn in btns:
+                txt = (await btn.text_content() or "").strip().lower()
+                if "google" in txt or "apple" in txt or "x " in txt or "xで" in txt:
+                    continue
+                if btn.is_visible():
+                    await btn.click(timeout=5000)
+                    clicked = f"button:{txt[:30]}"
+                    break
+        except Exception:
+            pass
+    if not clicked:
+        # Fallback 3: email input might already be on page — skip button click
+        email_check = await page.query_selector('input[name="email"], input[type="email"], input[autocomplete="email"]')
+        if email_check:
+            print(f"[{attempt}] Email input already visible — skipping button click", flush=True)
+            clicked = "already_visible"
+        else:
             print(f"[{attempt}] No email signup button — assuming email form present", flush=True)
     if clicked:
         print(f"[{attempt}] Clicked: {clicked}", flush=True)
-    await asyncio.sleep(1.0)
+    await asyncio.sleep(human_delay(2.0, 4.0))
     await dismiss_cookie_banner(page)
 
     emit_progress(attempt, "fill_email", "Filling registration email", email_addr)
     email_sel = await wait_for_selector_any(
         page,
         ['input[name="email"]', 'input[type="email"]', 'input[autocomplete="email"]'],
-        10000,
+        15000,
     )
+    # Also check inside iframes (xAI may load signup form in an iframe)
+    if not email_sel:
+        for frame in page.frames[1:]:
+            try:
+                fsel = await wait_for_selector_any(
+                    frame,
+                    ['input[name="email"]', 'input[type="email"]', 'input[autocomplete="email"]'],
+                    5000,
+                )
+                if fsel:
+                    email_sel = fsel
+                    print(f"[{attempt}] Found email input in iframe: {frame.url[:60]}", flush=True)
+                    break
+            except Exception:
+                continue
     if not email_sel:
         await screenshot(page, attempt, "no_email_input")
         raise RuntimeError("Could not find email input on sign-up")
@@ -2371,7 +2754,7 @@ async def do_signup(page, email_addr: str, password: str, attempt: int) -> bool:
         await screenshot(page, attempt, "email_fill_fail")
         raise RuntimeError("Failed to fill email")
 
-    await asyncio.sleep(0.4)
+    await asyncio.sleep(human_delay(0.8, 2.0))
     await handle_turnstile(page, attempt, max_wait=8)
 
     emit_progress(attempt, "submit_email", "Clicking Sign up", email_addr)
@@ -2381,7 +2764,7 @@ async def do_signup(page, email_addr: str, password: str, attempt: int) -> bool:
         await page.locator('button[type="submit"]').filter(has_text=re.compile(r"^sign up$", re.I)).click(timeout=5000)
     except Exception:
         await click_text_button(page, ["Sign up"], exclude=["Google", "Apple", "email", "X"])
-    await asyncio.sleep(2.0)
+    await asyncio.sleep(human_delay(2.0, 4.5))
 
     # Wait for OTP input: name=code autocomplete=one-time-code
     code_sel = await wait_for_selector_any(
@@ -2942,6 +3325,170 @@ async def do_email_login(page, email_addr: str, password: str, attempt: int) -> 
     return ok
 
 
+
+async def obtain_oidc_tokens_device_flow(page, email_addr: str, password: str, attempt: int) -> dict:
+    """Device flow alternative to PKCE — may avoid BFS flagging at token exchange."""
+    import urllib.parse as _up
+    import urllib.request as _ur
+    emit_progress(attempt, "device_flow", "Starting OAuth device flow", email_addr)
+
+    # Request device code
+    device_data = _up.urlencode({
+        "client_id": XAI_CLIENT_ID,
+        "scope": XAI_SCOPE,
+    }).encode()
+    req = _ur.Request(f"{XAI_TOKEN.replace('/token', '/device/code')}", data=device_data, method="POST")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    with _ur.urlopen(req, timeout=15) as resp:
+        device_resp = json.loads(resp.read())
+
+    user_code = device_resp.get("user_code", "")
+    verify_url = device_resp.get("verification_uri_complete", "")
+    device_code = device_resp.get("device_code", "")
+    interval = device_resp.get("interval", 5)
+    print(f"[{attempt}] Device code: {user_code} — {verify_url}", flush=True)
+
+    # Open verification URL — user may need to login here
+    await page.goto(verify_url, wait_until="commit", timeout=90000)
+    await asyncio.sleep(5)
+    await dismiss_cookie_banner(page)
+
+    # Check if we need to login (look for email/password inputs)
+    has_email = await page.locator('input[type="email"], input[name="email"]').count() > 0
+    has_password = await page.locator('input[type="password"]').count() > 0
+    cur_url = page.url or ""
+
+    if has_email or "sign-in" in cur_url:
+        print(f"[{attempt}] Device flow: need login on verify page", flush=True)
+        # Login with email
+        if has_email:
+            email_sel = await wait_for_selector_any(page, ['input[type="email"]', 'input[name="email"]'], 10000)
+            if email_sel:
+                await fill_input(page, [email_sel], email_addr)
+                await asyncio.sleep(1)
+                await click_text_button(page, ["Next", "Continue", "Log in", "Sign in"])
+                await asyncio.sleep(3)
+        # Fill password
+        pw_sel = await wait_for_selector_any(page, ['input[type="password"]'], 10000)
+        if pw_sel:
+            await fill_input(page, [pw_sel], password)
+            await asyncio.sleep(1)
+            await handle_turnstile(page, attempt, max_wait=15)
+            await click_text_button(page, ["Log in", "Sign in", "Next", "Continue"])
+            await asyncio.sleep(5)
+
+    # Click Continue on device page
+    await click_text_button(page, ["Continue"])
+    await asyncio.sleep(5)
+
+    # After Continue, xAI redirects to login page
+    cur = page.url or ""
+    if "sign-in" in cur or "login" in cur:
+        print(f"[{attempt}] Device: redirected to login after Continue", flush=True)
+        await dismiss_cookie_banner(page)
+        # Click "Login with email"
+        await click_text_button(page, ["Login with email", "Sign in with email", "email"], exclude=["Google", "Apple", "X"])
+        await asyncio.sleep(3)
+        await dismiss_cookie_banner(page)
+        # Fill email
+        le = await wait_for_selector_any(page, ['input[type="email"]', 'input[name="email"]'], 10000)
+        if le:
+            await fill_input(page, [le], email_addr)
+            await asyncio.sleep(1)
+            await click_text_button(page, ["Next", "Continue"])
+            await asyncio.sleep(3)
+        # Fill password
+        pw = await wait_for_selector_any(page, ['input[type="password"]'], 10000)
+        if pw:
+            await fill_input(page, [pw], password)
+            await asyncio.sleep(1)
+            await handle_turnstile(page, attempt, max_wait=15)
+            submit = await page.query_selector('button[type="submit"]')
+            if submit:
+                await submit.click(timeout=5000)
+            else:
+                await click_text_button(page, ["Login", "Log in", "Sign in"])
+            await asyncio.sleep(5)
+        print(f"[{attempt}] Device: after re-login URL={page.url}", flush=True)
+
+    # Now look for Allow/Authorize/Approve/Consent button
+    await asyncio.sleep(3)
+    await screenshot(page, attempt, "device_consent")
+    btns = await page.query_selector_all("button")
+    for btn in btns:
+        try:
+            txt = (await btn.text_content() or "").strip().lower()
+            vis = await btn.is_visible()
+            if vis and any(kw in txt for kw in ["allow", "authorize", "approve", "grant", "yes", "accept"]):
+                await btn.click(timeout=5000)
+                print(f"[{attempt}] Clicked: {txt}", flush=True)
+                await asyncio.sleep(3)
+                break
+        except Exception:
+            continue
+
+    # Also try form submit as fallback
+    try:
+        form = await page.query_selector("form")
+        if form:
+            submit_btn = await form.query_selector('button[type="submit"]')
+            if submit_btn and await submit_btn.is_visible():
+                await submit_btn.click(timeout=5000)
+                print(f"[{attempt}] Clicked form submit", flush=True)
+                await asyncio.sleep(3)
+    except Exception:
+        pass
+
+    # Poll for token
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        token_data = _up.urlencode({
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            "device_code": device_code,
+            "client_id": XAI_CLIENT_ID,
+        }).encode()
+        req = _ur.Request(XAI_TOKEN, data=token_data, method="POST")
+        req.add_header("Content-Type", "application/x-www-form-urlencoded")
+        try:
+            with _ur.urlopen(req, timeout=15) as resp:
+                token_resp = json.loads(resp.read())
+            if "access_token" in token_resp:
+                access = token_resp["access_token"]
+                refresh = token_resp.get("refresh_token", "")
+                expires_in = int(token_resp.get("expires_in", 21600))
+                expires_at = datetime.now(timezone.utc).timestamp() + expires_in
+                expires_at_iso = datetime.fromtimestamp(expires_at, timezone.utc).isoformat().replace("+00:00", "Z")
+                flagged, flag_reason = access_token_bot_flag(access)
+                tokens = {
+                    "access_token": access,
+                    "refresh_token": refresh,
+                    "expires_at": expires_at_iso,
+                    "email": email_addr,
+                    "bot_flagged": flagged,
+                    "bot_flag_reason": flag_reason,
+                    "flow": "device",
+                }
+                claims = decode_access_jwt_claims(access) or {}
+                if "bfs" in claims:
+                    tokens["bfs"] = claims.get("bfs")
+                if "bot_flag_source" in claims:
+                    tokens["bot_flag_source"] = claims.get("bot_flag_source")
+                tokens["referrer"] = claims.get("referrer") or XAI_REFERRER
+                print(f"[{attempt}] Device flow token: flagged={flagged} reason={flag_reason}", flush=True)
+                return tokens
+        except _ur.HTTPError as e:
+            body = e.read().decode()
+            if "authorization_pending" in body:
+                await asyncio.sleep(interval)
+                continue
+            elif "slow_down" in body:
+                await asyncio.sleep(interval * 2)
+                continue
+            else:
+                raise RuntimeError(f"Device flow error: {e.code} {body[:200]}")
+    raise RuntimeError("Device flow polling timeout")
+
+
 async def obtain_oidc_tokens(page, email_addr: str, password: str, attempt: int) -> dict:
     """Run PKCE authorize + email sign-in + code capture + exchange."""
     emit_progress(attempt, "oauth", "Starting Grok CLI OAuth PKCE", email_addr)
@@ -2959,6 +3506,7 @@ async def obtain_oidc_tokens(page, email_addr: str, password: str, attempt: int)
         "nonce": nonce,
         "plan": XAI_PLAN,
         "referrer": XAI_REFERRER,
+        "consent": XAI_CONSENT,
     }
     auth_url = f"{XAI_AUTHORIZE}?{urlencode(params)}"
     auth_code: dict[str, str | None] = {"code": None}
@@ -3084,6 +3632,24 @@ async def obtain_oidc_tokens(page, email_addr: str, password: str, attempt: int)
     tokens = exchange_code_for_tokens(code, verifier)
     if not tokens.get("email"):
         tokens["email"] = email_addr
+
+    # ── SSO cookie capture for console.x.ai image/video API ──────────────
+    try:
+        await page.goto("https://console.x.ai", wait_until="domcontentloaded", timeout=30000)
+        await asyncio.sleep(2)
+        cookies = await page.context.cookies()
+        sso_parts = []
+        for c in cookies:
+            if "x.ai" in (c.get("domain") or "") or "console.x.ai" in (c.get("domain") or ""):
+                sso_parts.append(f"{c['name']}={c['value']}")
+        if sso_parts:
+            tokens["sso_cookie"] = "; ".join(sso_parts)
+            print(f"[{attempt}] SSO cookie captured ({len(sso_parts)} cookies)", flush=True)
+        else:
+            print(f"[{attempt}] SSO cookie: none found on console.x.ai", flush=True)
+    except Exception as e:
+        print(f"[{attempt}] SSO cookie capture failed: {e}", flush=True)
+
     return tokens
 
 
@@ -3113,7 +3679,10 @@ async def _do_register_body(attempt_num: int, email_addr: str, password: str, pr
         except Exception as e:
             print(f"[{attempt_num}] login branch warn: {e}", flush=True)
 
-        tokens = await obtain_oidc_tokens(page, email_addr, password, attempt_num)
+        if _env_bool("GROK_DEVICE_FLOW", False):
+            tokens = await obtain_oidc_tokens_device_flow(page, email_addr, password, attempt_num)
+        else:
+            tokens = await obtain_oidc_tokens(page, email_addr, password, attempt_num)
         if tokens.get("bot_flagged") and REJECT_BFS:
             reason = tokens.get("bot_flag_reason") or "bfs"
             ref = tokens.get("referrer") or "?"
@@ -3138,7 +3707,7 @@ async def _do_register_body(attempt_num: int, email_addr: str, password: str, pr
 
 async def _do_register(attempt_num: int) -> dict | None:
     email_addr = await generate_email()
-    password = ACCOUNT_PASSWORD
+    password = generate_account_password() if PASSWORD_RANDOM else ACCOUNT_PASSWORD
     proxy_url, proxy_id = await next_proxy()
     _attempt_proxy[attempt_num] = proxy_id
 
@@ -3263,7 +3832,9 @@ async def main():
     if not IMAP_USER or not IMAP_PASS:
         print("ERROR: set GROK_IMAP_USER and GROK_IMAP_PASS in .env", flush=True)
         sys.exit(1)
-    if EMAIL_MODE == "domain" and not EMAIL_DOMAINS:
+    if EMAIL_MODE in ("mail_tm", "guerrillamail", "1secmail"):
+        print(f"  Email mode : {EMAIL_MODE} (temp mail, no IMAP/domain needed)", flush=True)
+    elif EMAIL_MODE == "domain" and not EMAIL_DOMAINS:
         print(
             "ERROR: set GROK_EMAIL_DOMAIN or GROK_EMAIL_DOMAINS for domain mode",
             flush=True,
@@ -3291,7 +3862,13 @@ async def main():
     else:
         print(f"  Gmail base : {GMAIL_BASE or IMAP_USER}", flush=True)
     print(f"  IMAP       : {IMAP_USER} @ {IMAP_HOST}:{IMAP_PORT}", flush=True)
-    print(f"  Password   : {'*' * max(0, len(ACCOUNT_PASSWORD) - 2)}{ACCOUNT_PASSWORD[-2:]}", flush=True)
+    if PASSWORD_RANDOM:
+        print(f"  Password   : random per account (len={PASSWORD_LEN})", flush=True)
+    else:
+        print(
+            f"  Password   : {'*' * max(0, len(ACCOUNT_PASSWORD) - 2)}{ACCOUNT_PASSWORD[-2:]} (shared)",
+            flush=True,
+        )
     print(f"  Headless   : {HEADLESS}", flush=True)
     print(
         f"  Proxies    : {len(PROXY_POOL)} ({PROXY_SOURCE})"

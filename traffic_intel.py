@@ -1093,7 +1093,7 @@ def summarize_project(pid: str) -> dict[str, Any]:
     payload = json.dumps({
         "model": GROK_SUMMARY_MODEL,
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 300,
+        "max_tokens": 8192,
         "temperature": 0.3,
     }).encode("utf-8")
 

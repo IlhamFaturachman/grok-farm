@@ -30,6 +30,11 @@ services:
       # Override config.yaml PostgreSQL DSN when set; auto-enables postgres driver.
       GROK2API_DATABASE_URL: "${GROK2API_DATABASE_URL:-}"
       GROK2API_QUALITY_GUARD_DIR: /var/lib/grok2api-quality-guard
+      # Upstream proxy rotation — route xAI requests through VPNX SOCKS5
+      # Prevents xAI from seeing VPS direct IP for all account requests
+      HTTPS_PROXY: "socks5://172.18.0.1:1081"
+      HTTP_PROXY: "socks5://172.18.0.1:1081"
+      NO_PROXY: "localhost,127.0.0.1,172.18.0.1"
     volumes:
       - "${GROK2API_CONFIG:-./docker/grok2api/config.yaml}:/run/grok2api/config.yaml:ro"
       - grok2api-data:/app/data
